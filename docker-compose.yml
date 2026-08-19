@@ -1,0 +1,26 @@
+# Local Postgres for the Shuddha backend.
+#   Bring up:   docker compose up -d
+#   Tear down:  docker compose down          (add -v to also drop the volume/data)
+# Values here match apps/suddh-bharat-backend/.env (DATABASE_URL).
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: shuddha-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: shuddha
+      POSTGRES_PASSWORD: shuddha
+      POSTGRES_DB: shuddha
+    # Host 5436 → container 5432 (5432–5435 are commonly taken by other local DBs).
+    ports:
+      - '5436:5432'
+    volumes:
+      - shuddha_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U shuddha -d shuddha']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  shuddha_pgdata:

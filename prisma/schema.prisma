@@ -1,0 +1,99 @@
+// Shuddha backend data model. See loop/decisions/0006-postgres-prisma-docker.md
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// A brand on the Shuddha marketplace. Brands are verified against the published
+/// category standard before they are listed (see business/website-content.md).
+model Brand {
+  id        String              @id @default(cuid())
+  name      String
+  slug      String              @unique
+  category  Category
+  status    VerificationStatus  @default(PENDING)
+  story     String?
+  website   String?
+  instagram String?
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  @@index([category, status])
+}
+
+enum Category {
+  FOOD
+  BABY
+  BEAUTY
+  CLOTHING
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+// ---- Auth & RBAC (ADR-0008) ------------------------------------------------
+
+enum Role {
+  USER
+  VENDOR
+  ADMIN
+  SUPERADMIN
+}
+
+enum AuthProvider {
+  LOCAL
+  GOOGLE
+  PHONE
+}
+
+/// An authenticated account. email/phone are optional+unique so a user can sign
+/// up by any provider (email/password, Google, or phone OTP) and link later.
+model User {
+  id            String         @id @default(cuid())
+  email         String?        @unique
+  phone         String?        @unique
+  passwordHash  String?
+  name          String?
+  googleId      String?        @unique
+  provider      AuthProvider   @default(LOCAL)
+  roles         Role[]         @default([USER])
+  emailVerified Boolean        @default(false)
+  phoneVerified Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  refreshTokens RefreshToken[]
+}
+
+/// Hashed, rotating refresh tokens. The raw token is never stored.
+model RefreshToken {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  tokenHash String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+/// One-time codes for phone verification / passwordless login. Code is hashed.
+model OtpCode {
+  id        String   @id @default(cuid())
+  phone     String
+  codeHash  String
+  purpose   String   @default("LOGIN")
+  expiresAt DateTime
+  consumedAt DateTime?
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([phone])
+}
