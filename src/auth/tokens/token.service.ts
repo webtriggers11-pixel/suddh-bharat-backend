@@ -72,13 +72,18 @@ export class TokenService {
     return row;
   }
 
-  /** Single-use: validate + revoke the token, returning its userId (rotation). */
+  /** Single-use: validate + revoke the token, returning its userId (rotation).
+   * The revoke is atomic (updateMany guarded on revokedAt: null) so two
+   * concurrent refreshes can't both mint a new pair from one token. */
   async consume(refreshToken: string): Promise<string> {
     const row = await this.validate(refreshToken);
-    await this.prisma.refreshToken.update({
-      where: { id: row.id },
+    const { count } = await this.prisma.refreshToken.updateMany({
+      where: { id: row.id, revokedAt: null },
       data: { revokedAt: new Date() },
     });
+    if (count !== 1) {
+      throw new UnauthorizedException('Refresh token already used');
+    }
     return row.userId;
   }
 
