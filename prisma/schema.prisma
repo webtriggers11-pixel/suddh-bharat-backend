@@ -14,7 +14,7 @@ model Brand {
   id        String              @id @default(cuid())
   name      String
   slug      String              @unique
-  category  Category
+  category  BrandCategory
   status    VerificationStatus  @default(PENDING)
   story     String?
   website   String?
@@ -25,7 +25,9 @@ model Brand {
   @@index([category, status])
 }
 
-enum Category {
+/// High-level marketplace segment for a Brand. Distinct from the catalog
+/// `Category` tree (below), which is the shopper-facing product taxonomy.
+enum BrandCategory {
   FOOD
   BABY
   BEAUTY
@@ -69,6 +71,9 @@ model User {
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   refreshTokens RefreshToken[]
+  cartItems     CartItem[]
+  addresses     Address[]
+  orders        Order[]
 }
 
 /// Hashed, rotating refresh tokens. The raw token is never stored.
@@ -96,4 +101,228 @@ model OtpCode {
   createdAt DateTime @default(now())
 
   @@index([phone])
+}
+
+// ---- Catalog (ADR-0010) ----------------------------------------------------
+
+/// Shopper-facing product taxonomy. Self-referential tree (parent → children);
+/// two levels used in practice (top-level + subcategory). Soft-deleted.
+/// Slug is unique within its parent scope, not globally.
+model Category {
+  id          String     @id @default(cuid())
+  name        String
+  slug        String
+  description String?
+  image       String? // single S3 key / URL (dummy for now)
+  parentId    String?
+  parent      Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children    Category[] @relation("CategoryTree")
+  sortOrder   Int        @default(0)
+  isActive    Boolean    @default(true)
+  products    Product[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([parentId, slug])
+  @@index([parentId, isActive, sortOrder])
+}
+
+/// A sellable product. Money is stored as integer paise (`*Minor`) per ADR-0010 —
+/// never float. No variant model: colour/material/size are flat columns; distinct
+/// variants are separate rows. Ratings are denormalized, recomputed from reviews.
+model Product {
+  id          String    @id @default(cuid())
+  name        String
+  slug        String    @unique
+  description String?
+  priceMinor  Int // selling price in paise
+  mrpMinor    Int // list price in paise
+  stock       Int       @default(0)
+  images      String[]  @default([]) // S3 keys / dummy URLs
+  categoryId  String?
+  category    Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  tags        String[]  @default([])
+  collection  String?
+  sku         String?   @unique
+  hsnCode     String?
+  material    String?
+  color       String?
+  // physical dims for shipping (not money — float ok)
+  weightKg    Float?
+  lengthCm    Float?
+  breadthCm   Float?
+  heightCm    Float?
+  // flags
+  isActive     Boolean @default(true)
+  isHandmade   Boolean @default(true)
+  isFeatured   Boolean @default(false)
+  isNew        Boolean @default(false)
+  isBestseller Boolean @default(false)
+  // denormalized rating aggregates (recomputed on review approve/delete)
+  avgRating   Float     @default(0)
+  reviewCount Int       @default(0)
+  cartItems   CartItem[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@index([categoryId, isActive])
+  @@index([isActive, createdAt])
+  @@index([isFeatured, isActive])
+}
+
+// ---- Cart (ADR-0010) -------------------------------------------------------
+
+/// DB-backed cart, one row per (user, product). No guest cart. Hard-deleted on
+/// remove/clear (per spec). Server recomputes totals from live product prices.
+model CartItem {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, productId])
+  @@index([userId])
+}
+
+// ---- Addresses, Orders, Payments (ADR-0010) --------------------------------
+
+enum AddressType {
+  HOME
+  WORK
+  OTHER
+}
+
+/// A shipping address in a user's address book. Soft-deleted. `isLocked` is set
+/// once the address is snapshotted into an order (then it cannot be edited).
+model Address {
+  id        String      @id @default(cuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      AddressType @default(HOME)
+  fullName  String
+  phone     String
+  line1     String
+  line2     String?
+  city      String
+  state     String
+  pincode   String
+  isDefault Boolean     @default(false)
+  isLocked  Boolean     @default(false)
+  orders    Order[]
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  deletedAt DateTime?
+
+  @@index([userId, isDefault])
+}
+
+enum OrderStatus {
+  PENDING
+  PLACED
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+  REFUND_INITIATED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  COD
+  RAZORPAY
+  UPI
+}
+
+enum PaymentStatus {
+  INITIATED
+  PENDING
+  SUCCESS
+  FAILED
+  CANCELLED
+  REFUNDED
+  COD_PENDING
+  COD_COLLECTED
+}
+
+/// A placed order. Money is integer paise. Address is snapshotted at placement
+/// so later edits/deletes to the address book never mutate order history.
+model Order {
+  id             String        @id @default(cuid())
+  orderNumber    String        @unique
+  userId         String
+  user           User          @relation(fields: [userId], references: [id])
+  status         OrderStatus   @default(PENDING)
+  subtotalMinor  Int
+  shippingMinor  Int           @default(0)
+  codChargeMinor Int           @default(0)
+  discountMinor  Int           @default(0)
+  totalMinor     Int
+  paymentMethod  PaymentMethod
+  couponCode     String?
+  // address snapshot
+  addressId      String?
+  address        Address?      @relation(fields: [addressId], references: [id])
+  shipName       String
+  shipPhone      String
+  shipEmail      String?
+  shipLine1      String
+  shipLine2      String?
+  shipCity       String
+  shipState      String
+  shipPincode    String
+  shipCountry    String        @default("India")
+  customerNotes  String?
+  items          OrderItem[]
+  payments       PaymentTransaction[]
+  placedAt       DateTime?
+  cancelledAt    DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+/// Line item snapshot. `productId` is a loose reference (no FK) so products can
+/// be soft-deleted without breaking order history; name/price are snapshotted.
+model OrderItem {
+  id             String   @id @default(cuid())
+  orderId        String
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId      String?
+  productName    String
+  productSlug    String?
+  productImage   String?
+  unitPriceMinor Int
+  quantity       Int
+  lineTotalMinor Int
+  createdAt      DateTime @default(now())
+
+  @@index([orderId])
+}
+
+model PaymentTransaction {
+  id               String        @id @default(cuid())
+  orderId          String
+  order            Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  method           PaymentMethod
+  amountMinor      Int
+  currency         String        @default("INR")
+  status           PaymentStatus @default(INITIATED)
+  gatewayOrderId   String?
+  gatewayPaymentId String?
+  attempt          Int           @default(1)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@index([orderId])
 }

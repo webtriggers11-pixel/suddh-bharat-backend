@@ -14,8 +14,10 @@ async function bootstrap() {
       transform: true,
     }),
   );
+  // CORS: allow ALL origins for now (dev). `origin: true` reflects the request
+  // origin, which also works with credentials. Tighten before prod (ADR-0010).
   app.enableCors({
-    origin: config.get<string>('FRONTEND_URL', 'http://localhost:3000'),
+    origin: true,
     credentials: true,
   });
 

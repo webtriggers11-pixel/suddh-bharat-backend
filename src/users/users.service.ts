@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { Prisma, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -29,6 +29,27 @@ export class UsersService {
 
   update(id: string, data: Prisma.UserUpdateInput): Promise<User> {
     return this.prisma.user.update({ where: { id }, data });
+  }
+
+  /** Update the current user's editable profile fields (name, phone). Phone must
+   *  be unique across other users. */
+  async updateProfile(
+    id: string,
+    data: { name?: string; phone?: string },
+  ): Promise<User> {
+    if (data.phone) {
+      const clash = await this.prisma.user.findFirst({
+        where: { phone: data.phone, NOT: { id } },
+        select: { id: true },
+      });
+      if (clash) {
+        throw new ConflictException('That phone number is already in use');
+      }
+    }
+    return this.prisma.user.update({
+      where: { id },
+      data: { name: data.name, phone: data.phone },
+    });
   }
 
   list(): Promise<User[]> {
