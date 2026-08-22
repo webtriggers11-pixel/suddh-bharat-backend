@@ -16,6 +16,7 @@ function makeUser(over: Partial<User> = {}): User {
     googleId: null,
     provider: AuthProvider.LOCAL,
     roles: [Role.USER],
+    isActive: true,
     emailVerified: false,
     phoneVerified: false,
     createdAt: new Date(),

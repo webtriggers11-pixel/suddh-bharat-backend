@@ -22,6 +22,11 @@ import { CouponsModule } from './coupons/coupons.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { RevalidateModule } from './common/revalidate.module';
 import { RedisModule } from './common/redis.module';
+import { DashboardModule } from './dashboard/dashboard.module';
+import { PaymentGatewaysModule } from './payment-gateways/payment-gateways.module';
+import { ShippingConfigsModule } from './shipping-configs/shipping-configs.module';
+import { StoreSettingsModule } from './store-settings/store-settings.module';
+import { BulkUploadModule } from './bulk-upload/bulk-upload.module';
 
 @Module({
   imports: [
@@ -57,6 +62,11 @@ import { RedisModule } from './common/redis.module';
     WishlistModule,
     CouponsModule,
     ReviewsModule,
+    DashboardModule,
+    PaymentGatewaysModule,
+    ShippingConfigsModule,
+    StoreSettingsModule,
+    BulkUploadModule,
   ],
   controllers: [AppController],
   providers: [
