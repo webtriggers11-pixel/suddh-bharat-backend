@@ -2,25 +2,25 @@
 CREATE TYPE "DiscountType" AS ENUM ('PERCENTAGE', 'FIXED');
 
 -- DropIndex
-DROP INDEX "Order_shipName_trgm_idx";
+DROP INDEX IF EXISTS "Order_shipName_trgm_idx";
 
 -- DropIndex
-DROP INDEX "Order_shipPhone_trgm_idx";
+DROP INDEX IF EXISTS "Order_shipPhone_trgm_idx";
 
 -- DropIndex
-DROP INDEX "Product_description_trgm_idx";
+DROP INDEX IF EXISTS "Product_description_trgm_idx";
 
 -- DropIndex
-DROP INDEX "Product_name_trgm_idx";
+DROP INDEX IF EXISTS "Product_name_trgm_idx";
 
 -- DropIndex
-DROP INDEX "Product_sku_trgm_idx";
+DROP INDEX IF EXISTS "Product_sku_trgm_idx";
 
 -- DropIndex
-DROP INDEX "Product_slug_trgm_idx";
+DROP INDEX IF EXISTS "Product_slug_trgm_idx";
 
 -- DropIndex
-DROP INDEX "Product_tags_gin_idx";
+DROP INDEX IF EXISTS "Product_tags_gin_idx";
 
 -- CreateTable
 CREATE TABLE "Coupon" (
