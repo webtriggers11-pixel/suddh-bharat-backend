@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, Product } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { RevalidateService } from '../common/revalidate.service';
 import { slugify, uniqueSlug } from '../common/slug.util';
 import {
   CreateProductDto,
@@ -21,12 +22,48 @@ export interface Paginated<T> {
 }
 
 /**
+ * Storefront listing projection — exactly the columns a product card renders.
+ * Deliberately omits the heavy/irrelevant logistics + audit columns
+ * (sku, hsnCode, weight/dimensions, createdAt/updatedAt/deletedAt) so a paged
+ * catalog read doesn't ship kilobytes per row that no card uses (T8).
+ */
+export const PRODUCT_CARD_SELECT = {
+  id: true,
+  name: true,
+  slug: true,
+  description: true,
+  priceMinor: true,
+  mrpMinor: true,
+  stock: true,
+  images: true,
+  categoryId: true,
+  tags: true,
+  collection: true,
+  material: true,
+  color: true,
+  isActive: true,
+  isHandmade: true,
+  isFeatured: true,
+  isNew: true,
+  isBestseller: true,
+  avgRating: true,
+  reviewCount: true,
+} satisfies Prisma.ProductSelect;
+
+export type ProductCard = Prisma.ProductGetPayload<{
+  select: typeof PRODUCT_CARD_SELECT;
+}>;
+
+/**
  * Product catalog (ADR-0010). Money is integer paise. Storefront reads see only
  * active, non-deleted products; admin flows pass `includeInactive`.
  */
 @Injectable()
 export class ProductsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly revalidate: RevalidateService,
+  ) {}
 
   private base(includeInactive: boolean): Prisma.ProductWhereInput {
     return includeInactive
@@ -37,7 +74,7 @@ export class ProductsService {
   async list(
     query: ProductQueryDto,
     includeInactive = false,
-  ): Promise<Paginated<Product>> {
+  ): Promise<Paginated<ProductCard>> {
     const page = query.page ?? 1;
     const pageSize = Math.min(query.pageSize ?? 20, 100);
     const where = await this.buildWhere(query, includeInactive);
@@ -50,6 +87,7 @@ export class ProductsService {
         orderBy,
         skip: (page - 1) * pageSize,
         take: pageSize,
+        select: PRODUCT_CARD_SELECT,
       }),
     ]);
 
@@ -60,6 +98,62 @@ export class ProductsService {
       pageSize,
       totalPages: Math.ceil(total / pageSize) || 0,
     };
+  }
+
+  /**
+   * Autocomplete for the search bar. Returns up to 6 matching products (with the
+   * bits a suggestion row needs) plus distinct name suggestions. Empty for a
+   * search under 2 chars. Reuses the same visibility + search rules as `list`.
+   */
+  async suggest(
+    query: ProductQueryDto,
+    includeInactive = false,
+  ): Promise<{
+    products: {
+      id: string;
+      name: string;
+      slug: string;
+      image: string | null;
+      priceMinor: number;
+    }[];
+    suggestions: string[];
+  }> {
+    const q = (query.search ?? '').trim();
+    if (q.length < 2) return { products: [], suggestions: [] };
+
+    const where = await this.buildWhere(
+      { ...query, search: q },
+      includeInactive,
+    );
+    const rows = await this.prisma.product.findMany({
+      where,
+      orderBy: [
+        { isBestseller: 'desc' },
+        { reviewCount: 'desc' },
+        { createdAt: 'desc' },
+      ],
+      take: 6,
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        priceMinor: true,
+        images: true,
+      },
+    });
+
+    const products = rows.map((p) => ({
+      id: p.id,
+      name: p.name,
+      slug: p.slug,
+      image: p.images[0] ?? null,
+      priceMinor: p.priceMinor,
+    }));
+    const suggestions = Array.from(new Set(rows.map((p) => p.name))).slice(
+      0,
+      6,
+    );
+    return { products, suggestions };
   }
 
   async getBySlug(slug: string, includeInactive = false): Promise<Product> {
@@ -73,7 +167,7 @@ export class ProductsService {
   async create(dto: CreateProductDto): Promise<Product> {
     await this.assertSkuFree(dto.sku);
     const slug = await this.resolveSlug(dto.slug ?? dto.name);
-    return this.prisma.product.create({
+    const created = await this.prisma.product.create({
       data: {
         name: dto.name,
         slug,
@@ -100,6 +194,8 @@ export class ProductsService {
         isBestseller: dto.isBestseller ?? false,
       },
     });
+    this.revalidate.revalidate(['products', `product:${created.slug}`]);
+    return created;
   }
 
   async update(id: string, dto: UpdateProductDto): Promise<Product> {
@@ -112,7 +208,7 @@ export class ProductsService {
     else if (dto.name && dto.name !== existing.name)
       slug = await this.resolveSlug(dto.name, id);
 
-    return this.prisma.product.update({
+    const updated = await this.prisma.product.update({
       where: { id },
       data: {
         name: dto.name,
@@ -140,14 +236,21 @@ export class ProductsService {
         isBestseller: dto.isBestseller,
       },
     });
+    this.revalidate.revalidate([
+      'products',
+      `product:${existing.slug}`,
+      `product:${slug}`,
+    ]);
+    return updated;
   }
 
   async remove(id: string): Promise<{ id: string }> {
-    await this.requireById(id);
+    const existing = await this.requireById(id);
     await this.prisma.product.update({
       where: { id },
       data: { deletedAt: new Date(), isActive: false },
     });
+    this.revalidate.revalidate(['products', `product:${existing.slug}`]);
     return { id };
   }
 

@@ -52,8 +52,28 @@ export class UsersService {
     });
   }
 
-  list(): Promise<User[]> {
-    return this.prisma.user.findMany({ orderBy: { createdAt: 'desc' } });
+  /**
+   * Admin user list. Bounded + paginated so it never loads the whole user base,
+   * and projected so `passwordHash` is never even fetched.
+   */
+  list(page = 1, pageSize = 50) {
+    const take = Math.min(Math.max(pageSize, 1), 100);
+    return this.prisma.user.findMany({
+      orderBy: { createdAt: 'desc' },
+      skip: (Math.max(page, 1) - 1) * take,
+      take,
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        name: true,
+        roles: true,
+        provider: true,
+        emailVerified: true,
+        phoneVerified: true,
+        createdAt: true,
+      },
+    });
   }
 
   /** Public-safe projection — never leak passwordHash. */

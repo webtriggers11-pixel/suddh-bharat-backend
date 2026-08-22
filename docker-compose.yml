@@ -22,5 +22,19 @@ services:
       timeout: 5s
       retries: 10
 
+  # Redis: shared store for the rate-limiter (and future shared caches) so limits
+  # hold ACROSS instances. Host 6380 → container 6379 (6379 is often taken).
+  redis:
+    image: redis:7-alpine
+    container_name: shuddha-redis
+    restart: unless-stopped
+    ports:
+      - '6380:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   shuddha_pgdata:

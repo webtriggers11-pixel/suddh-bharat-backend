@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import { OrdersService } from './orders.service';
@@ -9,6 +10,7 @@ import { CreateOrderDto } from './dto/order.dto';
 export class OrdersController {
   constructor(private readonly orders: OrdersService) {}
 
+  @Throttle({ default: { limit: 20, ttl: 3_600_000 } }) // 20 orders/hour per IP
   @Post()
   checkout(@CurrentUser() user: AuthUser, @Body() dto: CreateOrderDto) {
     return this.orders.checkout(user.id, user.email, dto);

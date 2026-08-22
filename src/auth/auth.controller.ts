@@ -9,8 +9,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Throttle } from '@nestjs/throttler';
 import { Role, User } from '@prisma/client';
 import type { Response } from 'express';
+
+// Per-IP limits for abuse-prone auth endpoints (spec §5). ttl in ms.
+const HOUR = 3_600_000;
+const MIN = 60_000;
 import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
 import {
@@ -35,12 +40,14 @@ export class AuthController {
   ) {}
 
   @Public()
+  @Throttle({ default: { limit: 10, ttl: HOUR } })
   @Post('register')
   register(@Body() dto: RegisterDto) {
     return this.auth.register(dto);
   }
 
   @Public()
+  @Throttle({ default: { limit: 10, ttl: MIN } })
   @HttpCode(200)
   @Post('login')
   login(@Body() dto: LoginDto) {
@@ -70,6 +77,7 @@ export class AuthController {
 
   // ---- Phone OTP ----
   @Public()
+  @Throttle({ default: { limit: 5, ttl: HOUR } })
   @HttpCode(200)
   @Post('otp/request')
   requestOtp(@Body() dto: RequestOtpDto) {
@@ -77,6 +85,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 10, ttl: HOUR } })
   @HttpCode(200)
   @Post('otp/verify')
   verifyOtp(@Body() dto: VerifyOtpDto) {
@@ -111,7 +120,8 @@ export class AuthController {
   // ---- RBAC demo: admin-only ----
   @Roles(Role.ADMIN, Role.SUPERADMIN)
   @Get('admin/users')
-  async listUsers() {
-    return (await this.users.list()).map((u) => UsersService.toPublic(u));
+  listUsers() {
+    // list() is already bounded + public-projected (no passwordHash fetched).
+    return this.users.list();
   }
 }

@@ -1,11 +1,13 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsIn,
   IsInt,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -41,6 +43,7 @@ export class CreateProductDto {
 
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(10)
   @IsString({ each: true })
   images?: string[];
 
@@ -50,6 +53,7 @@ export class CreateProductDto {
 
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(30)
   @IsString({ each: true })
   tags?: string[];
 
@@ -143,6 +147,7 @@ export class ProductQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(100)
   pageSize = 20;
 
   @IsOptional()
@@ -190,4 +195,10 @@ export class ProductQueryDto {
   @IsOptional()
   @IsIn(['price_asc', 'price_desc'])
   sort?: 'price_asc' | 'price_desc';
+
+  // Autocomplete mode: with `suggest=true` + a `search` of ≥2 chars, the list
+  // endpoint returns { products, suggestions } instead of a paginated page.
+  @IsOptional()
+  @Transform(asBool)
+  suggest?: boolean;
 }

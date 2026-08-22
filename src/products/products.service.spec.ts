@@ -64,7 +64,12 @@ describe('ProductsService', () => {
       category: { findFirst: jest.fn() },
       $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
     };
-    service = new ProductsService(prisma as unknown as PrismaService);
+    service = new ProductsService(
+      prisma as unknown as PrismaService,
+      {
+        revalidate: jest.fn(),
+      } as unknown as import('../common/revalidate.service').RevalidateService,
+    );
   });
 
   describe('list', () => {
@@ -111,6 +116,39 @@ describe('ProductsService', () => {
       );
       const where = prisma.product.findMany.mock.calls[0][0].where;
       expect(where.categoryId).toEqual({ in: ['top', 'sub1', 'sub2'] });
+    });
+  });
+
+  describe('suggest', () => {
+    it('returns empty for a search under 2 chars (no query)', async () => {
+      const res = await service.suggest({ page: 1, pageSize: 6, search: 'a' });
+      expect(res).toEqual({ products: [], suggestions: [] });
+      expect(prisma.product.findMany).not.toHaveBeenCalled();
+    });
+
+    it('maps matches to {products, suggestions} with first image + price', async () => {
+      prisma.product.findMany.mockResolvedValue([
+        makeProduct({
+          id: 'p1',
+          name: 'Atta',
+          slug: 'atta',
+          priceMinor: 34900,
+          images: ['img-a', 'img-b'],
+        }),
+        makeProduct({ id: 'p2', name: 'Atta', slug: 'atta-2', images: [] }),
+      ]);
+      const res = await service.suggest({ page: 1, pageSize: 6, search: 'at' });
+      expect(prisma.product.findMany.mock.calls[0][0].take).toBe(6);
+      expect(res.products[0]).toEqual({
+        id: 'p1',
+        name: 'Atta',
+        slug: 'atta',
+        image: 'img-a',
+        priceMinor: 34900,
+      });
+      expect(res.products[1].image).toBeNull();
+      // suggestions are distinct names.
+      expect(res.suggestions).toEqual(['Atta']);
     });
   });
 

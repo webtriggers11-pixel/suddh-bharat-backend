@@ -84,20 +84,25 @@ describe('CartService', () => {
       );
     });
 
-    it('rejects when requested qty exceeds stock', async () => {
+    it('rejects (and clamps) when the resulting qty exceeds stock', async () => {
       prisma.product.findFirst.mockResolvedValue(makeProduct({ stock: 3 }));
-      prisma.cartItem.findUnique.mockResolvedValue(null);
+      // Atomic upsert lands qty=5, service clamps to 3 and throws.
+      prisma.cartItem.upsert.mockResolvedValue({ quantity: 5 });
       await expect(service.add('u1', 'p1', 5)).rejects.toBeInstanceOf(
         BadRequestException,
       );
+      expect(prisma.cartItem.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { quantity: 3 } }),
+      );
     });
 
-    it('increments an existing line and re-checks stock against the new total', async () => {
+    it('increments atomically (no read-then-set) and accepts within stock', async () => {
       prisma.product.findFirst.mockResolvedValue(makeProduct({ stock: 10 }));
-      prisma.cartItem.findUnique.mockResolvedValue({ quantity: 2 });
+      prisma.cartItem.upsert.mockResolvedValue({ quantity: 5 });
       await service.add('u1', 'p1', 3);
       const arg = prisma.cartItem.upsert.mock.calls[0][0];
-      expect(arg.update.quantity).toBe(5);
+      expect(arg.update.quantity).toEqual({ increment: 3 });
+      expect(arg.create.quantity).toBe(3);
     });
   });
 

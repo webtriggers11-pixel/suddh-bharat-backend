@@ -11,16 +11,16 @@ datasource db {
 /// A brand on the Shuddha marketplace. Brands are verified against the published
 /// category standard before they are listed (see business/website-content.md).
 model Brand {
-  id        String              @id @default(cuid())
+  id        String             @id @default(cuid())
   name      String
-  slug      String              @unique
+  slug      String             @unique
   category  BrandCategory
-  status    VerificationStatus  @default(PENDING)
+  status    VerificationStatus @default(PENDING)
   story     String?
   website   String?
   instagram String?
-  createdAt DateTime            @default(now())
-  updatedAt DateTime            @updatedAt
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
 
   @@index([category, status])
 }
@@ -74,31 +74,33 @@ model User {
   cartItems     CartItem[]
   addresses     Address[]
   orders        Order[]
+  wishlist      Wishlist[]
+  reviews       Review[]
 }
 
 /// Hashed, rotating refresh tokens. The raw token is never stored.
 model RefreshToken {
-  id        String   @id @default(cuid())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String    @id @default(cuid())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    String
   tokenHash String
   expiresAt DateTime
   revokedAt DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   @@index([userId])
 }
 
 /// One-time codes for phone verification / passwordless login. Code is hashed.
 model OtpCode {
-  id        String   @id @default(cuid())
-  phone     String
-  codeHash  String
-  purpose   String   @default("LOGIN")
-  expiresAt DateTime
+  id         String    @id @default(cuid())
+  phone      String
+  codeHash   String
+  purpose    String    @default("LOGIN")
+  expiresAt  DateTime
   consumedAt DateTime?
-  attempts  Int      @default(0)
-  createdAt DateTime @default(now())
+  attempts   Int       @default(0)
+  createdAt  DateTime  @default(now())
 
   @@index([phone])
 }
@@ -132,43 +134,46 @@ model Category {
 /// never float. No variant model: colour/material/size are flat columns; distinct
 /// variants are separate rows. Ratings are denormalized, recomputed from reviews.
 model Product {
-  id          String    @id @default(cuid())
-  name        String
-  slug        String    @unique
-  description String?
-  priceMinor  Int // selling price in paise
-  mrpMinor    Int // list price in paise
-  stock       Int       @default(0)
-  images      String[]  @default([]) // S3 keys / dummy URLs
-  categoryId  String?
-  category    Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  tags        String[]  @default([])
-  collection  String?
-  sku         String?   @unique
-  hsnCode     String?
-  material    String?
-  color       String?
+  id           String     @id @default(cuid())
+  name         String
+  slug         String     @unique
+  description  String?
+  priceMinor   Int // selling price in paise
+  mrpMinor     Int // list price in paise
+  stock        Int        @default(0)
+  images       String[]   @default([]) // S3 keys / dummy URLs
+  categoryId   String?
+  category     Category?  @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  tags         String[]   @default([])
+  collection   String?
+  sku          String?    @unique
+  hsnCode      String?
+  material     String?
+  color        String?
   // physical dims for shipping (not money — float ok)
-  weightKg    Float?
-  lengthCm    Float?
-  breadthCm   Float?
-  heightCm    Float?
+  weightKg     Float?
+  lengthCm     Float?
+  breadthCm    Float?
+  heightCm     Float?
   // flags
-  isActive     Boolean @default(true)
-  isHandmade   Boolean @default(true)
-  isFeatured   Boolean @default(false)
-  isNew        Boolean @default(false)
-  isBestseller Boolean @default(false)
+  isActive     Boolean    @default(true)
+  isHandmade   Boolean    @default(true)
+  isFeatured   Boolean    @default(false)
+  isNew        Boolean    @default(false)
+  isBestseller Boolean    @default(false)
   // denormalized rating aggregates (recomputed on review approve/delete)
-  avgRating   Float     @default(0)
-  reviewCount Int       @default(0)
-  cartItems   CartItem[]
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  deletedAt   DateTime?
+  avgRating    Float      @default(0)
+  reviewCount  Int        @default(0)
+  cartItems    CartItem[]
+  wishlist     Wishlist[]
+  reviews      Review[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  deletedAt    DateTime?
 
-  @@index([categoryId, isActive])
+  @@index([categoryId, isActive, createdAt]) // category browse + default sort
   @@index([isActive, createdAt])
+  @@index([isActive, priceMinor]) // price-sorted catalog pages
   @@index([isFeatured, isActive])
 }
 
@@ -188,6 +193,72 @@ model CartItem {
 
   @@unique([userId, productId])
   @@index([userId])
+}
+
+// ---- Wishlist ("likes") ----------------------------------------------------
+
+/// A user's "liked" products (Amazon-style wishlist). One row per (user, product);
+/// hard-deleted on unlike. Separate table from the cart — liking never affects the
+/// cart or stock.
+model Wishlist {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, productId])
+  @@index([userId, createdAt])
+}
+
+// ---- Reviews ---------------------------------------------------------------
+
+/// A product review. One per (user, product). Created unapproved; only approved
+/// reviews are public. `product.avgRating`/`reviewCount` are recomputed over
+/// approved, non-deleted reviews on BOTH approve and delete. Soft-deleted.
+model Review {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  rating     Int // 1..5
+  title      String?
+  body       String?
+  isApproved Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  deletedAt  DateTime?
+
+  @@unique([userId, productId])
+  @@index([productId, isApproved, createdAt])
+}
+
+// ---- Coupons ---------------------------------------------------------------
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+/// A discount code. Money is integer paise. `discountValue` is a whole-percent
+/// for PERCENTAGE (e.g. 10 = 10%) or a paise amount for FIXED. `usedCount` is
+/// incremented atomically at order placement. Soft-deleted.
+model Coupon {
+  id               String       @id @default(cuid())
+  code             String       @unique // stored uppercased
+  discountType     DiscountType
+  discountValue    Int
+  minOrderMinor    Int          @default(0)
+  maxDiscountMinor Int? // cap for PERCENTAGE discounts
+  usageLimit       Int?
+  usedCount        Int          @default(0)
+  isActive         Boolean      @default(true)
+  expiresAt        DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  deletedAt        DateTime?
 }
 
 // ---- Addresses, Orders, Payments (ADR-0010) --------------------------------
@@ -255,41 +326,54 @@ enum PaymentStatus {
 /// A placed order. Money is integer paise. Address is snapshotted at placement
 /// so later edits/deletes to the address book never mutate order history.
 model Order {
-  id             String        @id @default(cuid())
-  orderNumber    String        @unique
-  userId         String
-  user           User          @relation(fields: [userId], references: [id])
-  status         OrderStatus   @default(PENDING)
-  subtotalMinor  Int
-  shippingMinor  Int           @default(0)
-  codChargeMinor Int           @default(0)
-  discountMinor  Int           @default(0)
-  totalMinor     Int
-  paymentMethod  PaymentMethod
-  couponCode     String?
+  id                  String               @id @default(cuid())
+  orderNumber         String               @unique
+  userId              String
+  user                User                 @relation(fields: [userId], references: [id])
+  status              OrderStatus          @default(PENDING)
+  subtotalMinor       Int
+  shippingMinor       Int                  @default(0) // charged to customer
+  shippingActualMinor Int                  @default(0) // actual courier cost (from Shiprocket)
+  shippingCourier     String?
+  shippingEtaDays     Int?
+  isFreeShipping      Boolean              @default(false)
+  codChargeMinor      Int                  @default(0)
+  discountMinor       Int                  @default(0)
+  totalMinor          Int
+  paymentMethod       PaymentMethod
+  couponCode          String?
+  couponId            String? // FK-less ref so a coupon use can be released on cancel
   // address snapshot
-  addressId      String?
-  address        Address?      @relation(fields: [addressId], references: [id])
-  shipName       String
-  shipPhone      String
-  shipEmail      String?
-  shipLine1      String
-  shipLine2      String?
-  shipCity       String
-  shipState      String
-  shipPincode    String
-  shipCountry    String        @default("India")
-  customerNotes  String?
-  items          OrderItem[]
-  payments       PaymentTransaction[]
-  placedAt       DateTime?
-  cancelledAt    DateTime?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  deletedAt      DateTime?
+  addressId           String?
+  address             Address?             @relation(fields: [addressId], references: [id])
+  shipName            String
+  shipPhone           String
+  shipEmail           String?
+  shipLine1           String
+  shipLine2           String?
+  shipCity            String
+  shipState           String
+  shipPincode         String
+  shipCountry         String               @default("India")
+  customerNotes       String?
+  adminNotes          String?
+  // Set when something needs manual attention: payment captured after the order
+  // closed (refund owed), or stock oversold at payment time.
+  needsReview         Boolean       @default(false)
+  items               OrderItem[]
+  payments            PaymentTransaction[]
+  shipment            ShipmentDetail?
+  placedAt            DateTime?
+  confirmedAt         DateTime?
+  shippedAt           DateTime?
+  deliveredAt         DateTime?
+  cancelledAt         DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  deletedAt           DateTime?
 
   @@index([userId, createdAt])
-  @@index([status])
+  @@index([status, createdAt]) // admin list: status filter + newest-first sort
 }
 
 /// Line item snapshot. `productId` is a loose reference (no FK) so products can
@@ -308,6 +392,7 @@ model OrderItem {
   createdAt      DateTime @default(now())
 
   @@index([orderId])
+  @@index([productId]) // product-centric restock / reconciliation lookups
 }
 
 model PaymentTransaction {
@@ -320,9 +405,84 @@ model PaymentTransaction {
   status           PaymentStatus @default(INITIATED)
   gatewayOrderId   String?
   gatewayPaymentId String?
+  gatewaySignature String?
+  gatewayResponse  String? // raw JSON from gateway (audit trail)
+  failureReason    String?
   attempt          Int           @default(1)
+  completedAt      DateTime?
+  failedAt         DateTime?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
+  @@unique([orderId, attempt]) // one row per attempt — blocks concurrent dup inserts
+  @@unique([gatewayOrderId]) // idempotency: one txn per gateway order (NULLs allowed for COD)
   @@index([orderId])
+}
+
+// ---- Shipping (Shiprocket) -------------------------------------------------
+
+enum ShipmentStatus {
+  NOT_CREATED
+  LABEL_CREATED
+  PICKUP_SCHEDULED
+  PICKED_UP
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  DELIVERY_FAILED
+  RTO_INITIATED
+  RTO_DELIVERED
+  CANCELLED
+}
+
+/// One shipment per order (1:1). Holds the Shiprocket booking + AWB and the
+/// denormalized latest status; granular events live in ShipmentTracking.
+model ShipmentDetail {
+  id                       String             @id @default(cuid())
+  orderId                  String             @unique
+  order                    Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  provider                 String             @default("shiprocket")
+  shiprocketOrderId        String?
+  shiprocketShipmentId     String?
+  awbNumber                String?
+  courierId                String?
+  courierName              String?
+  trackingUrl              String?
+  status                   ShipmentStatus     @default(NOT_CREATED)
+  shippingCostActualMinor  Int                @default(0)
+  shippingCostChargedMinor Int                @default(0)
+  packageWeightKg          Float?
+  packageLengthCm          Float?
+  packageBreadthCm         Float?
+  packageHeightCm          Float?
+  labelGeneratedAt         DateTime?
+  pickupScheduledAt        DateTime?
+  pickedUpAt               DateTime?
+  shippedAt                DateTime?
+  estimatedDelivery        DateTime?
+  deliveredAt              DateTime?
+  isReturn                 Boolean            @default(false)
+  returnAwb                String?
+  returnReason             String?
+  providerResponse         String?
+  trackingEvents           ShipmentTracking[]
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+
+  @@index([awbNumber])
+}
+
+/// A single tracking scan for a shipment, deduped by (shipment, eventTime).
+model ShipmentTracking {
+  id          String         @id @default(cuid())
+  shipmentId  String
+  shipment    ShipmentDetail @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  status      String
+  description String?
+  location    String?
+  eventTime   DateTime
+  createdAt   DateTime       @default(now())
+
+  @@unique([shipmentId, eventTime])
+  @@index([shipmentId])
 }

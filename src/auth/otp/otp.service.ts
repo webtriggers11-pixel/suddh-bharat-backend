@@ -24,6 +24,13 @@ export class OtpService {
     const ttl = this.config.get<number>('OTP_TTL_SECONDS', 300);
     const code = String(randomInt(0, 10 ** length)).padStart(length, '0');
 
+    // Invalidate any prior unconsumed codes so only the newest is valid — shrinks
+    // the guessing window (a fresh request must not leave old codes live).
+    await this.prisma.otpCode.updateMany({
+      where: { phone, purpose, consumedAt: null },
+      data: { consumedAt: new Date() },
+    });
+
     await this.prisma.otpCode.create({
       data: {
         phone,
@@ -33,8 +40,11 @@ export class OtpService {
       },
     });
 
-    // TODO: integrate an SMS provider (Twilio/MSG91). Dev: log the code.
-    this.logger.log(`OTP for ${phone}: ${code}`);
+    // TODO: real SMS provider (MSG91). The code is NEVER logged in the clear —
+    // only surfaced behind an explicit OTP_DEBUG flag for local development.
+    if (this.config.get<string>('OTP_DEBUG') === 'true') {
+      this.logger.debug(`OTP for ${phone}: ${code}`);
+    }
     return code;
   }
 

@@ -29,6 +29,8 @@ export class ProductsController {
   @Public()
   @Get()
   list(@Query() query: ProductQueryDto) {
+    // Autocomplete mode returns { products, suggestions } instead of a page.
+    if (query.suggest) return this.products.suggest(query, false);
     return this.products.list(query, false);
   }
 

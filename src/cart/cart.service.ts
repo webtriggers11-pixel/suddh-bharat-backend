@@ -70,17 +70,24 @@ export class CartService {
     if (quantity < 1) throw new BadRequestException('Quantity must be ≥ 1');
     const product = await this.requireActiveProduct(productId);
 
-    const existing = await this.prisma.cartItem.findUnique({
-      where: { userId_productId: { userId, productId } },
-    });
-    const newQty = (existing?.quantity ?? 0) + quantity;
-    this.assertStock(product.stock, newQty);
-
-    await this.prisma.cartItem.upsert({
+    // Atomic increment (not read-then-set) so concurrent adds of the same product
+    // can't lose an update. Stock is validated after against the resulting qty.
+    const row = await this.prisma.cartItem.upsert({
       where: { userId_productId: { userId, productId } },
       create: { userId, productId, quantity },
-      update: { quantity: newQty },
+      update: { quantity: { increment: quantity } },
     });
+    if (row.quantity > product.stock) {
+      // Clamp back to available stock rather than reject (the increment already
+      // landed); keeps the cart consistent with live stock.
+      await this.prisma.cartItem.update({
+        where: { userId_productId: { userId, productId } },
+        data: { quantity: product.stock },
+      });
+      throw new BadRequestException(
+        `Only ${product.stock} in stock — cart set to the maximum available`,
+      );
+    }
     return this.summary(userId);
   }
 

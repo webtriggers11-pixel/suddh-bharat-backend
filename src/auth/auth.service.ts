@@ -107,8 +107,10 @@ export class AuthService {
     phone: string,
   ): Promise<{ phone: string; devCode?: string }> {
     const code = await this.otp.request(phone);
-    const dev = process.env.NODE_ENV !== 'production';
-    return { phone, ...(dev ? { devCode: code } : {}) };
+    // Only echo the code back behind an explicit debug flag — never on a mere
+    // non-production NODE_ENV (fail-open account-takeover risk).
+    const debug = process.env.OTP_DEBUG === 'true';
+    return { phone, ...(debug ? { devCode: code } : {}) };
   }
 
   async verifyOtp(phone: string, code: string): Promise<AuthResult> {
