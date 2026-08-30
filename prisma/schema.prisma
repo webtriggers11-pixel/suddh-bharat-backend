@@ -513,8 +513,10 @@ model StoreSettings {
   createdAt                  DateTime @default(now())
 }
 
-/// A payment-provider credential set (e.g. Razorpay). `keySecret` is write-only
-/// in the dashboard — never projected back to the client.
+/// A payment-provider credential set (e.g. Razorpay). `keySecret` is
+/// AES-256-GCM encrypted at rest (see common/secret-crypto.util.ts,
+/// CONFIG_ENCRYPTION_KEY) and write-only in the dashboard — never projected
+/// back to the client.
 model PaymentGateway {
   id          String   @id @default(cuid())
   provider    String   @unique // provider key, e.g. "razorpay"
@@ -528,7 +530,9 @@ model PaymentGateway {
 }
 
 /// A shipping-provider credential set (e.g. Shiprocket) + cached auth token and
-/// webhook secret. `apiPassword`/`webhookSecret` are write-only in the dashboard.
+/// webhook secret. `apiPassword`/`webhookSecret` are AES-256-GCM encrypted at
+/// rest (see common/secret-crypto.util.ts, CONFIG_ENCRYPTION_KEY) and
+/// write-only in the dashboard.
 model ShippingConfig {
   id             String    @id @default(cuid())
   provider       String    @unique // provider key, e.g. "shiprocket"

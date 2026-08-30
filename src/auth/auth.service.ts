@@ -25,6 +25,9 @@ export class AuthService {
   ) {}
 
   private async withTokens(user: User): Promise<AuthResult> {
+    if (!user.isActive) {
+      throw new UnauthorizedException('Account is deactivated');
+    }
     const { accessToken, refreshToken } = await this.tokens.issue(user);
     return { user: UsersService.toPublic(user), accessToken, refreshToken };
   }

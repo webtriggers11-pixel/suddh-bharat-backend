@@ -1,15 +1,15 @@
-import {
-  BadGatewayException,
-  ConflictException,
-  Injectable,
-  Logger,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadGatewayException, Injectable, Logger } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { ShippingConfig } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreConfigService } from '../store-config/store-config.service';
 import { StoreSettingsService } from '../store-settings/store-settings.service';
+import { decryptSecret, encryptSecret } from '../common/secret-crypto.util';
+import {
+  assertProviderFree,
+  getRowOrThrow,
+  normalizeProviderKey,
+} from '../common/provider-credentials.util';
 import {
   CreateShippingConfigDto,
   RegisterWebhookDto,
@@ -76,22 +76,23 @@ export class ShippingConfigsService {
   }
 
   async create(dto: CreateShippingConfigDto) {
-    const provider = dto.provider.trim().toLowerCase();
-    if (await this.prisma.shippingConfig.findUnique({ where: { provider } })) {
-      throw new ConflictException(
-        `A "${provider}" provider is already configured`,
-      );
-    }
+    const provider = normalizeProviderKey(dto.provider);
+    await assertProviderFree(
+      (p) => this.prisma.shippingConfig.findUnique({ where: { provider: p } }),
+      provider,
+      'provider',
+    );
     const created = await this.prisma.shippingConfig.create({
       data: {
         provider,
         displayName: dto.displayName,
         apiEmail: dto.apiEmail,
-        apiPassword: dto.apiPassword,
+        apiPassword: encryptSecret(dto.apiPassword),
         isActive: dto.isActive ?? true,
         isTestMode: dto.isTestMode ?? false,
       },
     });
+    await this.storeConfig.refresh();
     return toPublicConfig(created);
   }
 
@@ -102,17 +103,21 @@ export class ShippingConfigsService {
       data: {
         displayName: dto.displayName,
         apiEmail: dto.apiEmail,
-        ...(dto.apiPassword ? { apiPassword: dto.apiPassword } : {}),
+        ...(dto.apiPassword
+          ? { apiPassword: encryptSecret(dto.apiPassword) }
+          : {}),
         isActive: dto.isActive,
         isTestMode: dto.isTestMode,
       },
     });
+    await this.storeConfig.refresh();
     return toPublicConfig(updated);
   }
 
   async remove(id: string) {
     await this.getOrThrow(id);
     await this.prisma.shippingConfig.delete({ where: { id } });
+    await this.storeConfig.refresh();
     return { success: true };
   }
 
@@ -177,24 +182,34 @@ export class ShippingConfigsService {
     const secret = randomBytes(24).toString('hex');
     await this.prisma.shippingConfig.update({
       where: { id },
-      data: { webhookSecret: secret },
+      data: { webhookSecret: encryptSecret(secret) },
     });
+    await this.storeConfig.refresh();
     this.logger.log(`Registered webhook ${dto.webhookUrl} for shipping ${id}`);
     return { success: true, message: 'Webhook registered.' };
   }
 
   // ---- internals -----------------------------------------------------------
 
+  /** Reuse the cached token (`expiresAt` already bakes in a day's early-refresh
+   * margin) instead of re-authenticating on every admin action. */
   private async login(
     config: ShippingConfig,
   ): Promise<{ token: string; expiresAt: Date }> {
+    if (
+      config.token &&
+      config.tokenExpiresAt &&
+      config.tokenExpiresAt > new Date()
+    ) {
+      return { token: config.token, expiresAt: config.tokenExpiresAt };
+    }
     const base = this.storeConfig.shiprocketBaseUrl();
     const data = await this.fetchJson<LoginResponse>(`${base}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: config.apiEmail,
-        password: config.apiPassword,
+        password: decryptSecret(config.apiPassword),
       }),
     });
     if (!data?.token) {
@@ -229,11 +244,12 @@ export class ShippingConfigsService {
     return String(err);
   }
 
-  private async getOrThrow(id: string): Promise<ShippingConfig> {
-    const config = await this.prisma.shippingConfig.findUnique({
-      where: { id },
-    });
-    if (!config) throw new NotFoundException('Shipping provider not found');
-    return config;
+  private getOrThrow(id: string): Promise<ShippingConfig> {
+    return getRowOrThrow(
+      (rowId) =>
+        this.prisma.shippingConfig.findUnique({ where: { id: rowId } }),
+      id,
+      'Shipping provider',
+    );
   }
 }

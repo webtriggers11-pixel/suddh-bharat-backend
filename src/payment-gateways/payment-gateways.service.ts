@@ -1,10 +1,13 @@
-import {
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PaymentGateway } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { StoreConfigService } from '../store-config/store-config.service';
+import { encryptSecret } from '../common/secret-crypto.util';
+import {
+  assertProviderFree,
+  getRowOrThrow,
+  normalizeProviderKey,
+} from '../common/provider-credentials.util';
 import {
   CreatePaymentGatewayDto,
   UpdatePaymentGatewayDto,
@@ -27,7 +30,10 @@ export function toPublicGateway(g: PaymentGateway) {
 /** CRUD for payment-provider credentials (spec 09). ADMIN/SUPERADMIN. */
 @Injectable()
 export class PaymentGatewaysService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storeConfig: StoreConfigService,
+  ) {}
 
   async list() {
     const rows = await this.prisma.paymentGateway.findMany({
@@ -37,25 +43,23 @@ export class PaymentGatewaysService {
   }
 
   async create(dto: CreatePaymentGatewayDto) {
-    const provider = dto.provider.trim().toLowerCase();
-    const existing = await this.prisma.paymentGateway.findUnique({
-      where: { provider },
-    });
-    if (existing) {
-      throw new ConflictException(
-        `A "${provider}" gateway is already configured`,
-      );
-    }
+    const provider = normalizeProviderKey(dto.provider);
+    await assertProviderFree(
+      (p) => this.prisma.paymentGateway.findUnique({ where: { provider: p } }),
+      provider,
+      'gateway',
+    );
     const created = await this.prisma.paymentGateway.create({
       data: {
         provider,
         displayName: dto.displayName,
         keyId: dto.keyId,
-        keySecret: dto.keySecret,
+        keySecret: encryptSecret(dto.keySecret),
         isActive: dto.isActive ?? true,
         isTestMode: dto.isTestMode ?? false,
       },
     });
+    await this.storeConfig.refresh();
     return toPublicGateway(created);
   }
 
@@ -67,25 +71,28 @@ export class PaymentGatewaysService {
         displayName: dto.displayName,
         keyId: dto.keyId,
         // Only overwrite the secret when a non-empty value is supplied.
-        ...(dto.keySecret ? { keySecret: dto.keySecret } : {}),
+        ...(dto.keySecret ? { keySecret: encryptSecret(dto.keySecret) } : {}),
         isActive: dto.isActive,
         isTestMode: dto.isTestMode,
       },
     });
+    await this.storeConfig.refresh();
     return toPublicGateway(updated);
   }
 
   async remove(id: string) {
     await this.getOrThrow(id);
     await this.prisma.paymentGateway.delete({ where: { id } });
+    await this.storeConfig.refresh();
     return { success: true };
   }
 
-  private async getOrThrow(id: string): Promise<PaymentGateway> {
-    const gateway = await this.prisma.paymentGateway.findUnique({
-      where: { id },
-    });
-    if (!gateway) throw new NotFoundException('Payment gateway not found');
-    return gateway;
+  private getOrThrow(id: string): Promise<PaymentGateway> {
+    return getRowOrThrow(
+      (rowId) =>
+        this.prisma.paymentGateway.findUnique({ where: { id: rowId } }),
+      id,
+      'Payment gateway',
+    );
   }
 }

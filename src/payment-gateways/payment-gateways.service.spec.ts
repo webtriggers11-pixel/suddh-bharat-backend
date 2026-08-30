@@ -1,6 +1,8 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { PaymentGatewaysService } from './payment-gateways.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { StoreConfigService } from '../store-config/store-config.service';
+import { decryptSecret } from '../common/secret-crypto.util';
 
 const baseRow = {
   id: 'g1',
@@ -24,9 +26,11 @@ describe('PaymentGatewaysService', () => {
       delete: jest.Mock;
     };
   };
+  let storeConfig: { refresh: jest.Mock };
   let service: PaymentGatewaysService;
 
   beforeEach(() => {
+    process.env.CONFIG_ENCRYPTION_KEY = 'test-key';
     prisma = {
       paymentGateway: {
         findMany: jest.fn().mockResolvedValue([baseRow]),
@@ -36,7 +40,11 @@ describe('PaymentGatewaysService', () => {
         delete: jest.fn().mockResolvedValue(baseRow),
       },
     };
-    service = new PaymentGatewaysService(prisma as unknown as PrismaService);
+    storeConfig = { refresh: jest.fn().mockResolvedValue(undefined) };
+    service = new PaymentGatewaysService(
+      prisma as unknown as PrismaService,
+      storeConfig as unknown as StoreConfigService,
+    );
   });
 
   it('never leaks the key secret in list output', async () => {
@@ -72,6 +80,21 @@ describe('PaymentGatewaysService', () => {
     );
   });
 
+  it('encrypts the key secret at rest on create', async () => {
+    prisma.paymentGateway.findUnique.mockResolvedValue(null);
+    await service.create({
+      provider: 'razorpay',
+      displayName: 'x',
+      keyId: 'k',
+      keySecret: 'plain-secret',
+    });
+    const dataArg = prisma.paymentGateway.create.mock.calls[0][0].data as {
+      keySecret: string;
+    };
+    expect(dataArg.keySecret).not.toBe('plain-secret');
+    expect(decryptSecret(dataArg.keySecret)).toBe('plain-secret');
+  });
+
   it('keeps the existing secret when update omits keySecret', async () => {
     prisma.paymentGateway.findUnique.mockResolvedValue(baseRow);
     await service.update('g1', { displayName: 'New name' });
@@ -79,11 +102,14 @@ describe('PaymentGatewaysService', () => {
     expect(dataArg).not.toHaveProperty('keySecret');
   });
 
-  it('overwrites the secret when update supplies one', async () => {
+  it('overwrites the secret (encrypted) when update supplies one', async () => {
     prisma.paymentGateway.findUnique.mockResolvedValue(baseRow);
     await service.update('g1', { keySecret: 'rotated' });
-    const dataArg = prisma.paymentGateway.update.mock.calls[0][0].data;
-    expect(dataArg.keySecret).toBe('rotated');
+    const dataArg = prisma.paymentGateway.update.mock.calls[0][0].data as {
+      keySecret: string;
+    };
+    expect(dataArg.keySecret).not.toBe('rotated');
+    expect(decryptSecret(dataArg.keySecret)).toBe('rotated');
   });
 
   it('throws NotFound deleting a missing gateway', async () => {
@@ -91,5 +117,19 @@ describe('PaymentGatewaysService', () => {
     await expect(service.remove('nope')).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+
+  it('refreshes the live config cache after create/update/remove', async () => {
+    prisma.paymentGateway.findUnique.mockResolvedValue(null);
+    await service.create({
+      provider: 'razorpay',
+      displayName: 'x',
+      keyId: 'k',
+      keySecret: 's',
+    });
+    prisma.paymentGateway.findUnique.mockResolvedValue(baseRow);
+    await service.update('g1', { keySecret: 'rotated' });
+    await service.remove('g1');
+    expect(storeConfig.refresh).toHaveBeenCalledTimes(3);
   });
 });

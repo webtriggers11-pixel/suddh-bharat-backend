@@ -124,6 +124,35 @@ describe('AuthService', () => {
     );
   });
 
+  it('login rejects a deactivated account even with the right password', async () => {
+    users.findByEmail.mockResolvedValue(
+      makeUser({
+        isActive: false,
+        passwordHash: await bcrypt.hash('correct', 10),
+      }),
+    );
+    await expect(
+      service.login({ email: 'a@b.com', password: 'correct' }),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(tokens.issue).not.toHaveBeenCalled();
+  });
+
+  it('refresh rejects a deactivated account', async () => {
+    tokens.consume.mockResolvedValue('u1');
+    users.findById.mockResolvedValue(makeUser({ isActive: false }));
+    await expect(service.refresh('rt')).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+    expect(tokens.issue).not.toHaveBeenCalled();
+  });
+
+  it('googleLogin rejects a deactivated account', async () => {
+    await expect(
+      service.googleLogin(makeUser({ isActive: false })),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(tokens.issue).not.toHaveBeenCalled();
+  });
+
   it('validateGoogleProfile links an existing email account', async () => {
     users.findByGoogleId.mockResolvedValue(null);
     users.findByEmail.mockResolvedValue(makeUser({ id: 'existing' }));

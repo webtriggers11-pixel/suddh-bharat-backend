@@ -12,7 +12,10 @@ export class BulkUploadController {
 
   @Post()
   run(@Body() dto: BulkUploadDto, @Query('dryRun') dryRun?: string) {
-    const isDryRun = dto.dryRun ?? dryRun === 'true';
+    // Fail safe: a live import requires an explicit opt-out. If neither the
+    // body nor the query param says otherwise, this previews instead of
+    // writing to live products.
+    const isDryRun = dto.dryRun ?? dryRun !== 'false';
     return this.bulk.run(dto.content, isDryRun);
   }
 }

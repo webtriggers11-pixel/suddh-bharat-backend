@@ -22,7 +22,10 @@ export function parseCsv(input: string): string[][] {
       } else {
         field += c;
       }
-    } else if (c === '"') {
+    } else if (c === '"' && field === '') {
+      // Per RFC 4180, a quote only opens a quoted section as the field's very
+      // first character; a bare quote appearing after other characters is
+      // just literal text (falls through to the `field += c` branch below).
       inQuotes = true;
     } else if (c === ',') {
       row.push(field);

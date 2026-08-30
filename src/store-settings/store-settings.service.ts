@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { StoreSettings } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { StoreConfigService } from '../store-config/store-config.service';
 import { UpdateStoreSettingsDto } from './dto/store-settings.dto';
 
 const SINGLETON_ID = 'singleton';
@@ -11,20 +12,36 @@ const SINGLETON_ID = 'singleton';
  */
 @Injectable()
 export class StoreSettingsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storeConfig: StoreConfigService,
+  ) {}
 
-  /** Return the singleton, seeding sensible defaults on first read. */
+  /** Return the singleton, seeding it from the current env-configured policy
+   * on first read (rather than bare column defaults) so simply opening this
+   * page doesn't silently change live shipping/COD behaviour — e.g. dropping
+   * an env-configured free-shipping threshold to "never free" just because no
+   * row existed yet. */
   async get(): Promise<StoreSettings> {
-    return this.prisma.storeSettings.upsert({
+    const policy = this.storeConfig.shippingPolicy();
+    const row = await this.prisma.storeSettings.upsert({
       where: { id: SINGLETON_ID },
       update: {},
-      create: { id: SINGLETON_ID },
+      create: {
+        id: SINGLETON_ID,
+        codEnabled: policy.codEnabled,
+        codChargeMinor: policy.codChargeMinor,
+        freeShippingThresholdMinor: policy.freeShippingThresholdMinor,
+        minOrderMinor: policy.minOrderMinor,
+      },
     });
+    await this.storeConfig.refresh();
+    return row;
   }
 
   async update(dto: UpdateStoreSettingsDto): Promise<StoreSettings> {
     await this.get(); // ensure the row exists
-    return this.prisma.storeSettings.update({
+    const row = await this.prisma.storeSettings.update({
       where: { id: SINGLETON_ID },
       data: {
         codEnabled: dto.codEnabled,
@@ -36,6 +53,8 @@ export class StoreSettingsService {
         minOrderMinor: dto.minOrderMinor,
       },
     });
+    await this.storeConfig.refresh();
+    return row;
   }
 
   /** Persist the pickup address synced from a shipping provider. */
@@ -50,9 +69,11 @@ export class StoreSettingsService {
     pickupCountry?: string | null;
   }): Promise<StoreSettings> {
     await this.get();
-    return this.prisma.storeSettings.update({
+    const row = await this.prisma.storeSettings.update({
       where: { id: SINGLETON_ID },
       data: pickup,
     });
+    await this.storeConfig.refresh();
+    return row;
   }
 }

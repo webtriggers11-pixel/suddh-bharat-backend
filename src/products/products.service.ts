@@ -41,7 +41,6 @@ export const PRODUCT_CARD_SELECT = {
   collection: true,
   material: true,
   color: true,
-  sku: true,
   isActive: true,
   isHandmade: true,
   isFeatured: true,
@@ -49,8 +48,6 @@ export const PRODUCT_CARD_SELECT = {
   isBestseller: true,
   avgRating: true,
   reviewCount: true,
-  createdAt: true,
-  updatedAt: true,
 } satisfies Prisma.ProductSelect;
 
 export type ProductCard = Prisma.ProductGetPayload<{

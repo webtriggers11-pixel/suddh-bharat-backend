@@ -11,6 +11,13 @@ describe('parseCsv', () => {
     expect(rows[0]).toEqual(['a', 'b,c', 'd"e']);
     expect(rows[1]).toEqual(['1', '2', '3']);
   });
+
+  it('treats a bare quote mid-field as literal text, not a quote-open', () => {
+    const rows = parseCsv(
+      'Description,Price\nSterling silver pendant, 18" chain,100',
+    );
+    expect(rows[1]).toEqual(['Sterling silver pendant', ' 18" chain', '100']);
+  });
 });
 
 describe('BulkUploadService', () => {
@@ -71,10 +78,63 @@ describe('BulkUploadService', () => {
     );
   });
 
+  it('does not reactivate a manually deactivated product on a plain update', async () => {
+    prisma.product.findUnique.mockResolvedValue({
+      id: 'p9',
+      deletedAt: null,
+      isActive: false,
+    });
+    const csv = `${HEADER}\n,Ring,MB-1,desc,100,150,5,,,,,,,,,,Yes,No,No,No,`;
+    const res = await service.run(csv, false);
+    expect(res.updated).toBe(1);
+    const dataArg = prisma.product.update.mock.calls[0][0].data;
+    expect(dataArg).not.toHaveProperty('isActive');
+    expect(dataArg).not.toHaveProperty('deletedAt');
+  });
+
   it('skips a row missing required fields', async () => {
     const csv = `${HEADER}\n,,MB-2,desc,,,5,,,,,,,,,,No,No,No,No,`;
     const res = await service.run(csv, true);
     expect(res.skipped).toBe(1);
     expect(res.rows[0].error).toMatch(/required/i);
+  });
+
+  it('resolves a nested category path by walking the exact parent chain', async () => {
+    prisma.category.findFirst.mockImplementation(({ where }) => {
+      if (where.name.equals === 'Women' && where.parentId === null) {
+        return Promise.resolve({ id: 'women' });
+      }
+      if (where.name.equals === 'Rings' && where.parentId === 'women') {
+        return Promise.resolve({ id: 'women-rings' });
+      }
+      return Promise.resolve(null);
+    });
+    const csv = `${HEADER}\n"Women > Rings",Ring,MB-1,desc,100,150,5,,,,,,,,,,Yes,No,No,No,`;
+    await service.run(csv, false);
+    expect(prisma.product.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ categoryId: 'women-rings' }),
+      }),
+    );
+  });
+
+  it('does not conflate a same-named category under a different parent', async () => {
+    // Only "Men > Rings" exists; a "Women > Rings" path must not match it.
+    prisma.category.findFirst.mockImplementation(({ where }) => {
+      if (where.name.equals === 'Women' && where.parentId === null) {
+        return Promise.resolve({ id: 'women' });
+      }
+      return Promise.resolve(null); // no "Rings" under "women"
+    });
+    const csv = `${HEADER}\n"Women > Rings",Ring,MB-1,desc,100,150,5,,,,,,,,,,Yes,No,No,No,`;
+    const res = await service.run(csv, false);
+    expect(res.rows[0].warnings).toEqual([
+      'Category "Women > Rings" not found — left uncategorised',
+    ]);
+    expect(prisma.product.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.not.objectContaining({ categoryId: expect.anything() }),
+      }),
+    );
   });
 });

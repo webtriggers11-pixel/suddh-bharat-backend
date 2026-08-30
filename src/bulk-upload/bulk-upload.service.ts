@@ -138,7 +138,14 @@ export class BulkUploadService {
             void slug; // keep the existing slug on update
             await this.prisma.product.update({
               where: { id: existing.id },
-              data: { ...rest, deletedAt: null, isActive: true },
+              data: {
+                ...rest,
+                // Only a revive clears the soft-delete + reactivates; a plain
+                // update must not silently undo an admin's manual deactivation.
+                ...(status === 'revived'
+                  ? { deletedAt: null, isActive: true }
+                  : {}),
+              },
             });
           } else {
             await this.prisma.product.create({
@@ -199,25 +206,41 @@ export class BulkUploadService {
       : [];
   }
 
-  /** Resolve "Parent > Child" to the deepest matching category id, or warn. */
+  /** Resolve "Parent > Child" by walking the full chain level by level (each
+   * segment must match under its exact parent), so same-named categories
+   * under different parents (e.g. "Men > Rings" vs "Women > Rings") aren't
+   * conflated. Returns the deepest matching category id, or warns. */
   private async resolveCategory(
     path: string,
     warnings: string[],
   ): Promise<string | null> {
-    const segment = path.split('>').pop()?.trim() ?? '';
-    if (!segment) return null;
-    const match = await this.prisma.category.findFirst({
-      where: {
-        name: { equals: segment, mode: 'insensitive' },
-        deletedAt: null,
-      },
-      select: { id: true },
-    });
-    if (!match) {
-      warnings.push(`Category "${segment}" not found — left uncategorised`);
-      return null;
+    const segments = path
+      .split('>')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!segments.length) return null;
+
+    let parentId: string | null = null;
+    let matchId: string | null = null;
+    for (const segment of segments) {
+      const match: { id: string } | null = await this.prisma.category.findFirst(
+        {
+          where: {
+            name: { equals: segment, mode: 'insensitive' },
+            parentId,
+            deletedAt: null,
+          },
+          select: { id: true },
+        },
+      );
+      if (!match) {
+        warnings.push(`Category "${path}" not found — left uncategorised`);
+        return null;
+      }
+      parentId = match.id;
+      matchId = match.id;
     }
-    return match.id;
+    return matchId;
   }
 
   private async uniqueSlug(base: string): Promise<string> {

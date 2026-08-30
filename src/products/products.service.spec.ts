@@ -117,6 +117,16 @@ describe('ProductsService', () => {
       const where = prisma.product.findMany.mock.calls[0][0].where;
       expect(where.categoryId).toEqual({ in: ['top', 'sub1', 'sub2'] });
     });
+
+    it('never selects sku or audit timestamps for the public listing (T8)', async () => {
+      prisma.product.count.mockResolvedValue(0);
+      prisma.product.findMany.mockResolvedValue([]);
+      await service.list({ page: 1, pageSize: 20 }, false);
+      const select = prisma.product.findMany.mock.calls[0][0].select;
+      expect(select).not.toHaveProperty('sku');
+      expect(select).not.toHaveProperty('createdAt');
+      expect(select).not.toHaveProperty('updatedAt');
+    });
   });
 
   describe('suggest', () => {
