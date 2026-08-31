@@ -164,6 +164,36 @@ export class ProductsService {
     return product;
   }
 
+  /**
+   * "You may also like" rail (FEAT-017a). Up to 8 other active, in-stock
+   * products sharing the given product's category, newest/most-notable first.
+   * No category, or no product found at all, → `[]` (not an error) so the
+   * storefront can hide the section rather than break the page.
+   */
+  async findRelated(slug: string): Promise<ProductCard[]> {
+    const product = await this.prisma.product.findFirst({
+      where: { ...this.base(false), slug },
+      select: { id: true, categoryId: true },
+    });
+    if (!product || !product.categoryId) return [];
+
+    return this.prisma.product.findMany({
+      where: {
+        ...this.base(false),
+        categoryId: product.categoryId,
+        stock: { gt: 0 },
+        NOT: { id: product.id },
+      },
+      orderBy: [
+        { isBestseller: 'desc' },
+        { isNew: 'desc' },
+        { createdAt: 'desc' },
+      ],
+      take: 8,
+      select: PRODUCT_CARD_SELECT,
+    });
+  }
+
   async create(dto: CreateProductDto): Promise<Product> {
     await this.assertSkuFree(dto.sku);
     const slug = await this.resolveSlug(dto.slug ?? dto.name);

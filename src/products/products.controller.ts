@@ -40,6 +40,12 @@ export class ProductsController {
     return this.products.getBySlug(slug, false);
   }
 
+  @Public()
+  @Get(':slug/related')
+  related(@Param('slug') slug: string) {
+    return this.products.findRelated(slug);
+  }
+
   @Roles(Role.ADMIN, Role.SUPERADMIN)
   @Post()
   create(@Body() dto: CreateProductDto) {

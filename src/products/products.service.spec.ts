@@ -171,6 +171,82 @@ describe('ProductsService', () => {
     });
   });
 
+  describe('findRelated', () => {
+    it('returns up to 8 other active, in-stock products from the same category', async () => {
+      prisma.product.findFirst.mockResolvedValue(
+        makeProduct({ id: 'p1', categoryId: 'cat-1' }),
+      );
+      const related = [makeProduct({ id: 'p2', categoryId: 'cat-1' })];
+      prisma.product.findMany.mockResolvedValue(related);
+
+      const result = await service.findRelated('atta');
+
+      expect(result).toBe(related);
+      const findFirstArg = prisma.product.findFirst.mock.calls[0][0];
+      expect(findFirstArg.where).toMatchObject({ slug: 'atta' });
+      const findManyArg = prisma.product.findMany.mock.calls[0][0];
+      expect(findManyArg.where).toMatchObject({
+        deletedAt: null,
+        isActive: true,
+        categoryId: 'cat-1',
+        stock: { gt: 0 },
+        NOT: { id: 'p1' },
+      });
+      expect(findManyArg.take).toBe(8);
+      expect(findManyArg.orderBy).toEqual([
+        { isBestseller: 'desc' },
+        { isNew: 'desc' },
+        { createdAt: 'desc' },
+      ]);
+    });
+
+    it('excludes the product itself via the NOT clause', async () => {
+      prisma.product.findFirst.mockResolvedValue(
+        makeProduct({ id: 'self-id', categoryId: 'cat-1' }),
+      );
+      prisma.product.findMany.mockResolvedValue([]);
+
+      await service.findRelated('atta');
+
+      expect(prisma.product.findMany.mock.calls[0][0].where.NOT).toEqual({
+        id: 'self-id',
+      });
+    });
+
+    it('returns [] when the product has no categoryId', async () => {
+      prisma.product.findFirst.mockResolvedValue(
+        makeProduct({ id: 'p1', categoryId: null }),
+      );
+
+      const result = await service.findRelated('no-category');
+
+      expect(result).toEqual([]);
+      expect(prisma.product.findMany).not.toHaveBeenCalled();
+    });
+
+    it('returns [] when the product itself is not found', async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+
+      const result = await service.findRelated('missing');
+
+      expect(result).toEqual([]);
+      expect(prisma.product.findMany).not.toHaveBeenCalled();
+    });
+
+    it('filters out-of-stock and inactive products via the query (isActive/stock built into where)', async () => {
+      prisma.product.findFirst.mockResolvedValue(
+        makeProduct({ id: 'p1', categoryId: 'cat-1' }),
+      );
+      prisma.product.findMany.mockResolvedValue([]);
+
+      await service.findRelated('atta');
+
+      const where = prisma.product.findMany.mock.calls[0][0].where;
+      expect(where.isActive).toBe(true);
+      expect(where.stock).toEqual({ gt: 0 });
+    });
+  });
+
   describe('create', () => {
     it('rejects a duplicate SKU (409)', async () => {
       prisma.product.findFirst.mockResolvedValueOnce(makeProduct()); // sku clash
