@@ -19,6 +19,7 @@ const MIN = 60_000;
 import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
 import {
+  GuestCheckoutDto,
   LoginDto,
   RefreshDto,
   RegisterDto,
@@ -90,6 +91,15 @@ export class AuthController {
   @Post('otp/verify')
   verifyOtp(@Body() dto: VerifyOtpDto) {
     return this.auth.verifyOtp(dto.phone, dto.code);
+  }
+
+  // ---- Guest checkout (ADR-0012, zero-verification) ----
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: HOUR } })
+  @HttpCode(200)
+  @Post('guest')
+  guestCheckout(@Body() dto: GuestCheckoutDto) {
+    return this.auth.guestCheckout(dto.phone);
   }
 
   // ---- Google OAuth ----

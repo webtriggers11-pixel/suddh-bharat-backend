@@ -170,4 +170,30 @@ describe('AuthService', () => {
     });
     expect(user.id).toBe('existing');
   });
+
+  it('guestCheckout creates a brand-new unverified user for an unknown phone', async () => {
+    users.findByPhone.mockResolvedValue(null);
+    users.create.mockResolvedValue(
+      makeUser({
+        phone: '+91981',
+        provider: AuthProvider.PHONE,
+        phoneVerified: false,
+      }),
+    );
+    const res = await service.guestCheckout('+91981');
+    expect(users.create).toHaveBeenCalledWith({
+      phone: '+91981',
+      provider: AuthProvider.PHONE,
+      phoneVerified: false,
+    });
+    expect(res.accessToken).toBe('at');
+  });
+
+  it('guestCheckout rejects a phone that already has an account — never logs into an existing account without verification', async () => {
+    users.findByPhone.mockResolvedValue(makeUser({ phone: '+91981' }));
+    await expect(service.guestCheckout('+91981')).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    expect(users.create).not.toHaveBeenCalled();
+  });
 });

@@ -51,3 +51,8 @@ export class VerifyOtpDto {
   @Matches(/^\d{4,8}$/, { message: 'code must be 4–8 digits' })
   code!: string;
 }
+
+export class GuestCheckoutDto {
+  @Matches(PHONE, { message: 'phone must be a valid E.164 number' })
+  phone!: string;
+}

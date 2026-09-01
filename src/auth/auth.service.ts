@@ -129,4 +129,28 @@ export class AuthService {
       }));
     return this.withTokens(user);
   }
+
+  // ---- Guest checkout (ADR-0012) ------------------------------------------
+
+  /**
+   * Zero-verification guest checkout. UNLIKE verifyOtp above, this must NEVER
+   * reuse an existing phone's account — there is no OTP step here to prove
+   * ownership first, so a find-or-reuse would let anyone log into a
+   * stranger's account by submitting their phone number. Only ever creates a
+   * brand-new account; an already-registered phone is rejected so the caller
+   * can fall back to the real (OTP) sign-in flow.
+   */
+  async guestCheckout(phone: string): Promise<AuthResult> {
+    if (await this.users.findByPhone(phone)) {
+      throw new ConflictException(
+        'This phone number already has an account — please sign in.',
+      );
+    }
+    const user = await this.users.create({
+      phone,
+      provider: AuthProvider.PHONE,
+      phoneVerified: false,
+    });
+    return this.withTokens(user);
+  }
 }
