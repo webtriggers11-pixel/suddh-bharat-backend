@@ -61,7 +61,10 @@ export class ReviewsService {
     return rows.map(toResponse);
   }
 
-  /** Create a review — one per (user, product). Starts unapproved. */
+  /** Create a review — one per (user, product). Live immediately (the schema
+   * defaults isApproved to true): there is no moderation queue, so a review
+   * held back for approval would never be seen by anyone. Moderation is
+   * reactive — an unwanted review is removed, not withheld. */
   async create(userId: string, dto: CreateReviewDto) {
     const product = await this.prisma.product.findFirst({
       where: { id: dto.productId, isActive: true, deletedAt: null },
@@ -80,6 +83,9 @@ export class ReviewsService {
         },
         select: REVIEW_SELECT,
       });
+      // Counts toward the product's rating the moment it lands, so
+      // avgRating/reviewCount never drift behind the reviews on show.
+      await this.recompute(dto.productId);
       return toResponse(created);
     } catch (e) {
       if (

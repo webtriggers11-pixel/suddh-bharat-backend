@@ -43,7 +43,7 @@ describe('ReviewsService', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
-    it('creates an unapproved review with a computed userName', async () => {
+    it('creates an approved review with a computed userName', async () => {
       prisma.product.findFirst.mockResolvedValue({ id: 'p1' });
       prisma.review.create.mockResolvedValue({
         id: 'r1',
@@ -52,13 +52,38 @@ describe('ReviewsService', () => {
         rating: 5,
         title: null,
         body: null,
-        isApproved: false,
+        isApproved: true,
         createdAt: new Date(),
         user: { name: 'Asha' },
       });
       const res = await service.create('u1', { productId: 'p1', rating: 5 });
       expect(res.userName).toBe('Asha');
-      expect(res.isApproved).toBe(false);
+      // Live on submit — there is no moderation queue to hold it back.
+      expect(res.isApproved).toBe(true);
+    });
+
+    it('recomputes the product rating so a new review shows up right away', async () => {
+      prisma.product.findFirst.mockResolvedValue({ id: 'p1' });
+      prisma.review.create.mockResolvedValue({
+        id: 'r1',
+        userId: 'u1',
+        productId: 'p1',
+        rating: 5,
+        title: null,
+        body: null,
+        isApproved: true,
+        createdAt: new Date(),
+        user: { name: 'Asha' },
+      });
+      await service.create('u1', { productId: 'p1', rating: 5 });
+      expect(prisma.review.aggregate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { productId: 'p1', isApproved: true, deletedAt: null },
+        }),
+      );
+      expect(prisma.product.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'p1' } }),
+      );
     });
 
     it('409s on a duplicate (user already reviewed)', async () => {
@@ -83,7 +108,7 @@ describe('ReviewsService', () => {
         rating: 3,
         title: null,
         body: null,
-        isApproved: false,
+        isApproved: true,
         createdAt: new Date(),
         user: { name: null },
       });
