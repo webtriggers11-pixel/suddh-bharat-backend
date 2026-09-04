@@ -13,6 +13,7 @@ import { Public } from '../auth/decorators/public.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ProductsService } from './products.service';
 import {
+  AdminProductQueryDto,
   CreateProductDto,
   ProductQueryDto,
   UpdateProductDto,
@@ -32,6 +33,24 @@ export class ProductsController {
     // Autocomplete mode returns { products, suggestions } instead of a page.
     if (query.suggest) return this.products.suggest(query, false);
     return this.products.list(query, false);
+  }
+
+  /**
+   * Admin catalogue listing (BUG-002) — includes inactive products and the
+   * admin-only columns. Declared before the `:slug` routes so 'admin' is never
+   * swallowed as a slug.
+   */
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @Get('admin/all')
+  adminList(@Query() query: AdminProductQueryDto) {
+    return this.products.listAdmin(query);
+  }
+
+  /** Admin product read by id or slug — resolves inactive products too. */
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @Get('admin/:idOrSlug')
+  adminDetail(@Param('idOrSlug') idOrSlug: string) {
+    return this.products.getForAdmin(idOrSlug);
   }
 
   @Public()

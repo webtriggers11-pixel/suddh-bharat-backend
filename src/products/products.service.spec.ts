@@ -129,6 +129,65 @@ describe('ProductsService', () => {
     });
   });
 
+  describe('listAdmin (BUG-002)', () => {
+    it('includes inactive products and ships the admin columns', async () => {
+      prisma.product.count.mockResolvedValue(1);
+      prisma.product.findMany.mockResolvedValue([
+        makeProduct({ isActive: false }),
+      ]);
+      await service.listAdmin({ page: 1, pageSize: 20 });
+
+      const findArg = prisma.product.findMany.mock.calls[0][0];
+      // Soft-deleted rows stay hidden, but inactive ones must come through.
+      expect(findArg.where).toMatchObject({ deletedAt: null });
+      expect(findArg.where.isActive).toBeUndefined();
+      // The dashboard table renders these — the storefront projection omits them.
+      expect(findArg.select).toMatchObject({
+        sku: true,
+        createdAt: true,
+        updatedAt: true,
+      });
+    });
+
+    it('filters to inactive-only when status=inactive', async () => {
+      prisma.product.count.mockResolvedValue(0);
+      prisma.product.findMany.mockResolvedValue([]);
+      await service.listAdmin({ page: 1, pageSize: 20, status: 'inactive' });
+      expect(prisma.product.findMany.mock.calls[0][0].where.isActive).toBe(
+        false,
+      );
+    });
+
+    it('filters to active-only when status=active', async () => {
+      prisma.product.count.mockResolvedValue(0);
+      prisma.product.findMany.mockResolvedValue([]);
+      await service.listAdmin({ page: 1, pageSize: 20, status: 'active' });
+      expect(prisma.product.findMany.mock.calls[0][0].where.isActive).toBe(
+        true,
+      );
+    });
+  });
+
+  describe('getForAdmin (BUG-002)', () => {
+    it('resolves an inactive product by slug or id', async () => {
+      const inactive = makeProduct({ isActive: false });
+      prisma.product.findFirst.mockResolvedValue(inactive);
+      const found = await service.getForAdmin('atta');
+      expect(found).toBe(inactive);
+      const where = prisma.product.findFirst.mock.calls[0][0].where;
+      expect(where.deletedAt).toBeNull();
+      expect(where.isActive).toBeUndefined();
+      expect(where.OR).toEqual([{ id: 'atta' }, { slug: 'atta' }]);
+    });
+
+    it('still 404s a soft-deleted product', async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      await expect(service.getForAdmin('gone')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+  });
+
   describe('suggest', () => {
     it('returns empty for a search under 2 chars (no query)', async () => {
       const res = await service.suggest({ page: 1, pageSize: 6, search: 'a' });

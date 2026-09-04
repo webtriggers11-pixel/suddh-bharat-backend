@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RevalidateService } from '../common/revalidate.service';
 import { slugify, uniqueSlug } from '../common/slug.util';
 import {
+  AdminProductQueryDto,
   CreateProductDto,
   ProductQueryDto,
   UpdateProductDto,
@@ -55,6 +56,27 @@ export type ProductCard = Prisma.ProductGetPayload<{
 }>;
 
 /**
+ * Admin listing projection (BUG-002). The card projection plus the logistics +
+ * audit columns the dashboard table renders (SKU, created/updated) — reading
+ * the storefront projection there left those cells permanently blank.
+ */
+export const PRODUCT_ADMIN_SELECT = {
+  ...PRODUCT_CARD_SELECT,
+  sku: true,
+  hsnCode: true,
+  weightKg: true,
+  lengthCm: true,
+  breadthCm: true,
+  heightCm: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.ProductSelect;
+
+export type ProductAdminRow = Prisma.ProductGetPayload<{
+  select: typeof PRODUCT_ADMIN_SELECT;
+}>;
+
+/**
  * Product catalog (ADR-0010). Money is integer paise. Storefront reads see only
  * active, non-deleted products; admin flows pass `includeInactive`.
  */
@@ -75,29 +97,50 @@ export class ProductsService {
     query: ProductQueryDto,
     includeInactive = false,
   ): Promise<Paginated<ProductCard>> {
-    const page = query.page ?? 1;
-    const pageSize = Math.min(query.pageSize ?? 20, 100);
-    const where = await this.buildWhere(query, includeInactive);
-    const orderBy = this.buildOrderBy(query.sort);
+    const { page, pageSize, where, orderBy, skip, take } = await this.pageQuery(
+      query,
+      includeInactive,
+    );
 
     const [total, items] = await this.prisma.$transaction([
       this.prisma.product.count({ where }),
       this.prisma.product.findMany({
         where,
         orderBy,
-        skip: (page - 1) * pageSize,
-        take: pageSize,
+        skip,
+        take,
         select: PRODUCT_CARD_SELECT,
       }),
     ]);
 
-    return {
-      items,
-      total,
-      page,
-      pageSize,
-      totalPages: Math.ceil(total / pageSize) || 0,
-    };
+    return this.paginated(items, total, page, pageSize);
+  }
+
+  /**
+   * Admin catalogue listing (BUG-002). Sees inactive products — soft-deleted
+   * rows stay hidden — and ships the wider admin projection. `status` narrows
+   * to active-only / inactive-only for the dashboard's filter.
+   */
+  async listAdmin(
+    query: AdminProductQueryDto,
+  ): Promise<Paginated<ProductAdminRow>> {
+    const { page, pageSize, where, orderBy, skip, take } = await this.pageQuery(
+      query,
+      true,
+    );
+
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.product.count({ where }),
+      this.prisma.product.findMany({
+        where,
+        orderBy,
+        skip,
+        take,
+        select: PRODUCT_ADMIN_SELECT,
+      }),
+    ]);
+
+    return this.paginated(items, total, page, pageSize);
   }
 
   /**
@@ -159,6 +202,19 @@ export class ProductsService {
   async getBySlug(slug: string, includeInactive = false): Promise<Product> {
     const product = await this.prisma.product.findFirst({
       where: { ...this.base(includeInactive), slug },
+    });
+    if (!product) throw new NotFoundException('Product not found');
+    return product;
+  }
+
+  /**
+   * Admin product read (BUG-002). Resolves by id *or* slug and ignores
+   * `isActive`, so the dashboard can open — and therefore reactivate — a
+   * product the storefront hides. Soft-deleted rows still 404.
+   */
+  async getForAdmin(idOrSlug: string): Promise<Product> {
+    const product = await this.prisma.product.findFirst({
+      where: { deletedAt: null, OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
     });
     if (!product) throw new NotFoundException('Product not found');
     return product;
@@ -286,12 +342,50 @@ export class ProductsService {
 
   // --- internals ---
 
+  /** Shared paging/filtering arithmetic for the public + admin listings. */
+  private async pageQuery(
+    query: AdminProductQueryDto,
+    includeInactive: boolean,
+  ) {
+    const page = query.page ?? 1;
+    const pageSize = Math.min(query.pageSize ?? 20, 100);
+    return {
+      page,
+      pageSize,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      where: await this.buildWhere(query, includeInactive),
+      orderBy: this.buildOrderBy(query.sort),
+    };
+  }
+
+  private paginated<T>(
+    items: T[],
+    total: number,
+    page: number,
+    pageSize: number,
+  ): Paginated<T> {
+    return {
+      items,
+      total,
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize) || 0,
+    };
+  }
+
   private async buildWhere(
-    query: ProductQueryDto,
+    query: AdminProductQueryDto,
     includeInactive: boolean,
   ): Promise<Prisma.ProductWhereInput> {
     const where: Prisma.ProductWhereInput = this.base(includeInactive);
     const and: Prisma.ProductWhereInput[] = [];
+
+    // Admin visibility filter. Only meaningful with includeInactive (the public
+    // base already pins isActive: true); 'all' leaves the field unconstrained.
+    if (includeInactive && query.status && query.status !== 'all') {
+      where.isActive = query.status === 'active';
+    }
 
     // Filter precedence: categoryId > subcategorySlug > categorySlug.
     if (query.categoryId) {

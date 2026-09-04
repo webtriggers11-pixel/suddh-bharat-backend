@@ -202,3 +202,15 @@ export class ProductQueryDto {
   @Transform(asBool)
   suggest?: boolean;
 }
+
+/**
+ * Admin catalogue listing (BUG-002). Everything the storefront query supports,
+ * plus a visibility filter — the dashboard must be able to reach products the
+ * storefront deliberately hides. Kept separate from `ProductQueryDto` so the
+ * public endpoint can never be asked for inactive rows.
+ */
+export class AdminProductQueryDto extends ProductQueryDto {
+  @IsOptional()
+  @IsIn(['all', 'active', 'inactive'])
+  status?: 'all' | 'active' | 'inactive';
+}
