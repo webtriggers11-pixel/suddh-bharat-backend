@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { StoreConfigService } from './store-config.service';
+import { StorePolicyController } from './store-policy.controller';
 
 /**
  * Global so payment / shipping / orders can all read env-driven store config
@@ -7,6 +8,7 @@ import { StoreConfigService } from './store-config.service';
  */
 @Global()
 @Module({
+  controllers: [StorePolicyController],
   providers: [StoreConfigService],
   exports: [StoreConfigService],
 })

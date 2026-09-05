@@ -7,6 +7,7 @@ describe('StoreSettingsService', () => {
     storeSettings: { upsert: jest.Mock; update: jest.Mock };
   };
   let storeConfig: { shippingPolicy: jest.Mock; refresh: jest.Mock };
+  let revalidate: { revalidate: jest.Mock };
   let service: StoreSettingsService;
 
   beforeEach(() => {
@@ -26,9 +27,11 @@ describe('StoreSettingsService', () => {
       }),
       refresh: jest.fn().mockResolvedValue(undefined),
     };
+    revalidate = { revalidate: jest.fn() };
     service = new StoreSettingsService(
       prisma as unknown as PrismaService,
       storeConfig as unknown as StoreConfigService,
+      revalidate as unknown as import('../common/revalidate.service').RevalidateService,
     );
   });
 
@@ -64,5 +67,12 @@ describe('StoreSettingsService', () => {
     const dataArg = prisma.storeSettings.update.mock.calls[0][0].data;
     expect(dataArg).not.toHaveProperty('freeShippingThresholdMinor');
     expect(dataArg.codEnabled).toBe(false);
+  });
+
+  // FEAT-023 — the storefront reads /store/policy through the Next Data Cache;
+  // without this bust it keeps advertising the old free-shipping threshold.
+  it('busts the storefront policy cache after an update', async () => {
+    await service.update({ freeShippingThresholdMinor: 99900 });
+    expect(revalidate.revalidate).toHaveBeenCalledWith(['store-policy']);
   });
 });

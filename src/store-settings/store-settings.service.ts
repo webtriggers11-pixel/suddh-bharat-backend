@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { StoreSettings } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { RevalidateService } from '../common/revalidate.service';
 import { StoreConfigService } from '../store-config/store-config.service';
 import { UpdateStoreSettingsDto } from './dto/store-settings.dto';
 
@@ -15,6 +16,7 @@ export class StoreSettingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storeConfig: StoreConfigService,
+    private readonly revalidate: RevalidateService,
   ) {}
 
   /** Return the singleton, seeding it from the current env-configured policy
@@ -54,6 +56,9 @@ export class StoreSettingsService {
       },
     });
     await this.storeConfig.refresh();
+    // The storefront caches /store/policy — without this it would advertise
+    // the old free-shipping threshold for up to its TTL (FEAT-023).
+    this.revalidate.revalidate(['store-policy']);
     return row;
   }
 

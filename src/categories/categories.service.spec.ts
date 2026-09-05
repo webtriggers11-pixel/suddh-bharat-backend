@@ -141,7 +141,9 @@ describe('CategoriesService', () => {
 
     it('busts the categories tag on update', async () => {
       prisma.category.findFirst.mockResolvedValue(makeCategory());
-      prisma.category.update.mockResolvedValue(makeCategory({ isActive: false }));
+      prisma.category.update.mockResolvedValue(
+        makeCategory({ isActive: false }),
+      );
       await service.update('c1', { isActive: false });
       expect(revalidate.revalidate).toHaveBeenCalledWith([
         'categories',
@@ -159,5 +161,4 @@ describe('CategoriesService', () => {
       ]);
     });
   });
-
 });
