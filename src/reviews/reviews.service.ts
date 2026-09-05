@@ -5,7 +5,10 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { RevalidateService } from '../common/revalidate.service';
 import { CreateReviewDto } from './dto/review.dto';
+import { AdminReviewQueryDto } from './dto/admin-review.dto';
+import type { Paginated } from '../products/products.service';
 
 const REVIEW_SELECT = {
   id: true,
@@ -35,9 +38,104 @@ function toResponse(r: RawReview) {
   };
 }
 
+/** One row of the moderation queue. */
+export interface AdminReviewRow {
+  id: string;
+  rating: number;
+  title: string | null;
+  body: string | null;
+  isApproved: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  userName: string;
+  userEmail: string | null;
+  product: { id: string; name: string; slug: string } | null;
+}
+
+/** Moderation-queue row: the public shape plus who wrote it and what it's on. */
+const ADMIN_REVIEW_SELECT = {
+  ...REVIEW_SELECT,
+  updatedAt: true,
+  user: { select: { name: true, email: true } },
+  product: { select: { id: true, name: true, slug: true } },
+} satisfies Prisma.ReviewSelect;
+
 @Injectable()
 export class ReviewsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly revalidate: RevalidateService,
+  ) {}
+
+  /**
+   * Moderation queue (FEAT-024). Reviews could be approved by id but never
+   * listed, so an admin had no way to find one in the first place.
+   */
+  async listAdmin(
+    query: AdminReviewQueryDto,
+  ): Promise<Paginated<AdminReviewRow>> {
+    const page = query.page ?? 1;
+    const pageSize = Math.min(query.pageSize ?? 20, 100);
+    const where: Prisma.ReviewWhereInput = { deletedAt: null };
+    if (query.status === 'pending') where.isApproved = false;
+    else if (query.status === 'approved') where.isApproved = true;
+    if (query.productId) where.productId = query.productId;
+
+    const [total, rows] = await this.prisma.$transaction([
+      this.prisma.review.count({ where }),
+      this.prisma.review.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: ADMIN_REVIEW_SELECT,
+      }),
+    ]);
+
+    return {
+      items: rows.map((r) => ({
+        id: r.id,
+        rating: r.rating,
+        title: r.title,
+        body: r.body,
+        isApproved: r.isApproved,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        userName: r.user?.name?.trim() || 'Anonymous',
+        userEmail: r.user?.email ?? null,
+        product: r.product,
+      })),
+      total,
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize) || 0,
+    };
+  }
+
+  /**
+   * Approve or hide a review (FEAT-024). `approve` alone could only ever let
+   * content through — moderation also has to take it back down.
+   */
+  async setApproved(id: string, isApproved: boolean) {
+    const review = await this.requireById(id);
+    await this.prisma.review.update({
+      where: { id },
+      data: { isApproved },
+    });
+    await this.recompute(review.productId);
+    return { id, isApproved };
+  }
+
+  /** Admin soft delete — any review, not just the caller's own (FEAT-024). */
+  async removeAsAdmin(id: string) {
+    const review = await this.requireById(id);
+    await this.prisma.review.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
+    await this.recompute(review.productId);
+    return { id };
+  }
 
   /** Approved reviews for a product, newest first (public). */
   async listForProduct(productId: string) {
@@ -99,14 +197,8 @@ export class ReviewsService {
   }
 
   /** Approve a review (admin) → recompute the product's rating aggregates. */
-  async approve(id: string) {
-    const review = await this.requireById(id);
-    await this.prisma.review.update({
-      where: { id },
-      data: { isApproved: true },
-    });
-    await this.recompute(review.productId);
-    return { id, isApproved: true };
+  approve(id: string) {
+    return this.setApproved(id, true);
   }
 
   /** Owner-only soft delete → also recompute (fixes the spec's stale-aggregate bug). */
@@ -139,6 +231,16 @@ export class ReviewsService {
         reviewCount: agg._count,
       },
     });
+
+    // The storefront caches the rating and count on the product card/page —
+    // without this a moderation decision stayed invisible for the full TTL.
+    const product = await this.prisma.product.findFirst({
+      where: { id: productId },
+      select: { slug: true },
+    });
+    this.revalidate.revalidate(
+      product ? ['products', `product:${product.slug}`] : ['products'],
+    );
   }
 
   private async requireById(id: string) {

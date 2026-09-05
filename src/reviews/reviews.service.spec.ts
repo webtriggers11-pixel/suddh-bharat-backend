@@ -8,12 +8,15 @@ describe('ReviewsService', () => {
     review: {
       findMany: jest.Mock;
       findFirst: jest.Mock;
+      count: jest.Mock;
       create: jest.Mock;
       update: jest.Mock;
       aggregate: jest.Mock;
     };
     product: { findFirst: jest.Mock; update: jest.Mock };
+    $transaction: jest.Mock;
   };
+  let revalidate: { revalidate: jest.Mock };
   let service: ReviewsService;
 
   beforeEach(() => {
@@ -21,6 +24,7 @@ describe('ReviewsService', () => {
       review: {
         findMany: jest.fn(),
         findFirst: jest.fn(),
+        count: jest.fn().mockResolvedValue(0),
         create: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
         aggregate: jest
@@ -31,8 +35,13 @@ describe('ReviewsService', () => {
         findFirst: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
       },
+      $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
     };
-    service = new ReviewsService(prisma as unknown as PrismaService);
+    revalidate = { revalidate: jest.fn() };
+    service = new ReviewsService(
+      prisma as unknown as PrismaService,
+      revalidate as unknown as import('../common/revalidate.service').RevalidateService,
+    );
   });
 
   describe('create', () => {
@@ -162,6 +171,67 @@ describe('ReviewsService', () => {
       expect(prisma.product.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: { avgRating: 0, reviewCount: 0 } }),
       );
+    });
+  });
+
+  /**
+   * FEAT-024 — reviews could be approved by id but never LISTED, so an admin
+   * had no way to find one. Deleting someone else's review was impossible too,
+   * and nothing ever refreshed the storefront's cached rating.
+   */
+  describe('admin moderation (FEAT-024)', () => {
+    it('lists every non-deleted review, newest first, with the product', async () => {
+      prisma.review.findMany.mockResolvedValue([]);
+      await service.listAdmin({ page: 1, pageSize: 20 });
+      const arg = prisma.review.findMany.mock.calls[0][0];
+      expect(arg.where).toEqual({ deletedAt: null });
+      expect(arg.orderBy).toEqual({ createdAt: 'desc' });
+      expect(arg.select.product).toBeDefined();
+    });
+
+    it('filters to the pending queue when asked', async () => {
+      prisma.review.findMany.mockResolvedValue([]);
+      await service.listAdmin({ page: 1, pageSize: 20, status: 'pending' });
+      expect(prisma.review.findMany.mock.calls[0][0].where).toEqual({
+        deletedAt: null,
+        isApproved: false,
+      });
+    });
+
+    it('un-approves a review and recomputes the product rating', async () => {
+      prisma.review.findFirst.mockResolvedValue({ id: 'r1', productId: 'p1' });
+      prisma.product.findFirst.mockResolvedValue({ slug: 'atta' });
+      await service.setApproved('r1', false);
+      expect(prisma.review.update).toHaveBeenCalledWith({
+        where: { id: 'r1' },
+        data: { isApproved: false },
+      });
+      expect(prisma.product.update).toHaveBeenCalled();
+      expect(revalidate.revalidate).toHaveBeenCalledWith([
+        'products',
+        'product:atta',
+      ]);
+    });
+
+    it('lets an admin delete any review, not just their own', async () => {
+      prisma.review.findFirst.mockResolvedValue({ id: 'r1', productId: 'p1' });
+      prisma.product.findFirst.mockResolvedValue({ slug: 'atta' });
+      await service.removeAsAdmin('r1');
+      expect(prisma.review.update).toHaveBeenCalledWith({
+        where: { id: 'r1' },
+        data: { deletedAt: expect.any(Date) },
+      });
+      expect(revalidate.revalidate).toHaveBeenCalled();
+    });
+
+    it('busts the product cache when a review is approved', async () => {
+      prisma.review.findFirst.mockResolvedValue({ id: 'r1', productId: 'p1' });
+      prisma.product.findFirst.mockResolvedValue({ slug: 'atta' });
+      await service.approve('r1');
+      expect(revalidate.revalidate).toHaveBeenCalledWith([
+        'products',
+        'product:atta',
+      ]);
     });
   });
 });
