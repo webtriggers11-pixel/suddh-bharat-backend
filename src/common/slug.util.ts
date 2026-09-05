@@ -3,6 +3,14 @@
  * hyphenates whitespace. `uniqueSlug` appends -1, -2, … until `exists` returns
  * false, so callers stay storage-agnostic (global vs parent-scoped uniqueness).
  */
+
+/**
+ * Slugs that would collide with a literal route segment. `/products/admin/*`
+ * is the admin sub-tree, so a product slugged `admin` would send
+ * `/products/admin/related` into the role-guarded handler and 401 shoppers.
+ * Reserved slugs get the same `-1` suffix treatment as a duplicate.
+ */
+export const RESERVED_SLUGS = new Set(['admin', 'new', 'edit']);
 export function slugify(input: string): string {
   return input
     .toLowerCase()
@@ -17,9 +25,10 @@ export async function uniqueSlug(
   exists: (slug: string) => Promise<boolean>,
 ): Promise<string> {
   const root = slugify(base) || 'item';
-  if (!(await exists(root))) return root;
+  if (!RESERVED_SLUGS.has(root) && !(await exists(root))) return root;
   for (let i = 1; ; i++) {
     const candidate = `${root}-${i}`;
-    if (!(await exists(candidate))) return candidate;
+    if (!RESERVED_SLUGS.has(candidate) && !(await exists(candidate)))
+      return candidate;
   }
 }

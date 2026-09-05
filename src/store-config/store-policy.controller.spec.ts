@@ -1,5 +1,13 @@
+/* eslint-disable @typescript-eslint/unbound-method --
+ * These tests read decorator metadata off the prototype, which means
+ * deliberately referencing handlers as values. Nothing is ever called, so the
+ * `this`-scoping hazard the rule guards against cannot occur.
+ */
+import { Reflector } from '@nestjs/core';
 import { StorePolicyController } from './store-policy.controller';
 import { StoreConfigService } from './store-config.service';
+import { IS_PUBLIC_KEY } from '../auth/decorators/public.decorator';
+import { ROLES_KEY } from '../auth/decorators/roles.decorator';
 
 describe('StorePolicyController (FEAT-023)', () => {
   it('exposes the storefront-visible policy fields', () => {
@@ -45,5 +53,14 @@ describe('StorePolicyController (FEAT-023)', () => {
       'freeShippingThresholdMinor',
       'minOrderMinor',
     ]);
+  });
+
+  // The storefront reads this unauthenticated; JwtAuthGuard is global, so
+  // losing @Public() would silently 401 every page that shows shipping terms.
+  it('is public and carries no role requirement', () => {
+    const reflector = new Reflector();
+    const handler = StorePolicyController.prototype.policy;
+    expect(reflector.get(IS_PUBLIC_KEY, handler)).toBe(true);
+    expect(reflector.get(ROLES_KEY, handler)).toBeUndefined();
   });
 });
