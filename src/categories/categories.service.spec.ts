@@ -30,6 +30,7 @@ describe('CategoriesService', () => {
     };
   };
   let service: CategoriesService;
+  let revalidate: { revalidate: jest.Mock };
 
   beforeEach(() => {
     prisma = {
@@ -40,7 +41,11 @@ describe('CategoriesService', () => {
         update: jest.fn(),
       },
     };
-    service = new CategoriesService(prisma as unknown as PrismaService);
+    revalidate = { revalidate: jest.fn() };
+    service = new CategoriesService(
+      prisma as unknown as PrismaService,
+      revalidate as unknown as import('../common/revalidate.service').RevalidateService,
+    );
   });
 
   describe('tree', () => {
@@ -116,4 +121,43 @@ describe('CategoriesService', () => {
       expect(arg.data.isActive).toBe(false);
     });
   });
+
+  /**
+   * BUG-003 — the storefront caches /categories under the `categories` tag for
+   * 300s. Products bust their tags on every admin write; categories did not, so
+   * a category added, renamed, or hidden in the dashboard stayed invisible (or
+   * stale) on the website for up to five minutes.
+   */
+  describe('storefront cache invalidation (BUG-003)', () => {
+    it('busts the categories tag on create', async () => {
+      prisma.category.findFirst.mockResolvedValue(null);
+      prisma.category.create.mockResolvedValue(makeCategory());
+      await service.create({ name: 'Food' });
+      expect(revalidate.revalidate).toHaveBeenCalledWith([
+        'categories',
+        'products',
+      ]);
+    });
+
+    it('busts the categories tag on update', async () => {
+      prisma.category.findFirst.mockResolvedValue(makeCategory());
+      prisma.category.update.mockResolvedValue(makeCategory({ isActive: false }));
+      await service.update('c1', { isActive: false });
+      expect(revalidate.revalidate).toHaveBeenCalledWith([
+        'categories',
+        'products',
+      ]);
+    });
+
+    it('busts the categories tag on delete', async () => {
+      prisma.category.findFirst.mockResolvedValue(makeCategory());
+      prisma.category.update.mockResolvedValue(makeCategory());
+      await service.remove('c1');
+      expect(revalidate.revalidate).toHaveBeenCalledWith([
+        'categories',
+        'products',
+      ]);
+    });
+  });
+
 });

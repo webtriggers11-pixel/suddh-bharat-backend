@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Category, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { RevalidateService } from '../common/revalidate.service';
 import { slugify, uniqueSlug } from '../common/slug.util';
 import { CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto';
 
@@ -15,7 +16,19 @@ import { CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto';
  */
 @Injectable()
 export class CategoriesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly revalidate: RevalidateService,
+  ) {}
+
+  /**
+   * Bust the storefront's cached category reads (BUG-003). `products` goes too:
+   * the shop's category filter resolves slugs to ids, so renaming, hiding, or
+   * removing a category changes which products a cached listing should show.
+   */
+  private bustStorefrontCache(): void {
+    this.revalidate.revalidate(['categories', 'products']);
+  }
 
   private notDeleted: Prisma.CategoryWhereInput = { deletedAt: null };
 
@@ -83,7 +96,7 @@ export class CategoriesService {
       dto.slug ?? dto.name,
       dto.parentId ?? null,
     );
-    return this.prisma.category.create({
+    const created = await this.prisma.category.create({
       data: {
         name: dto.name,
         slug,
@@ -94,6 +107,8 @@ export class CategoriesService {
         isActive: dto.isActive ?? true,
       },
     });
+    this.bustStorefrontCache();
+    return created;
   }
 
   async update(id: string, dto: UpdateCategoryDto): Promise<Category> {
@@ -109,7 +124,7 @@ export class CategoriesService {
     } else if (dto.name && dto.name !== existing.name) {
       slug = await this.resolveSlug(dto.name, parentId, id);
     }
-    return this.prisma.category.update({
+    const updated = await this.prisma.category.update({
       where: { id },
       data: {
         name: dto.name,
@@ -121,6 +136,8 @@ export class CategoriesService {
         isActive: dto.isActive,
       },
     });
+    this.bustStorefrontCache();
+    return updated;
   }
 
   /** Soft delete. */
@@ -130,6 +147,7 @@ export class CategoriesService {
       where: { id },
       data: { deletedAt: new Date(), isActive: false },
     });
+    this.bustStorefrontCache();
     return { id };
   }
 
