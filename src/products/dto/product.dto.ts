@@ -214,3 +214,9 @@ export class AdminProductQueryDto extends ProductQueryDto {
   @IsIn(['all', 'active', 'inactive'])
   status?: 'all' | 'active' | 'inactive';
 }
+
+/** Body for the products row toggle (FEAT-020). */
+export class SetProductActiveDto {
+  @IsBoolean()
+  isActive!: boolean;
+}

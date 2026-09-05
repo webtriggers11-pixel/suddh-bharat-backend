@@ -330,6 +330,22 @@ export class ProductsService {
     return updated;
   }
 
+  /**
+   * Flip a product's storefront visibility (FEAT-020). A dedicated route so the
+   * dashboard's row toggle cannot accidentally submit a partial product body
+   * through the full update path, and so the storefront cache is busted for
+   * exactly this product.
+   */
+  async setActive(id: string, isActive: boolean): Promise<Product> {
+    const existing = await this.requireById(id);
+    const updated = await this.prisma.product.update({
+      where: { id },
+      data: { isActive },
+    });
+    this.revalidate.revalidate(['products', `product:${existing.slug}`]);
+    return updated;
+  }
+
   async remove(id: string): Promise<{ id: string }> {
     const existing = await this.requireById(id);
     await this.prisma.product.update({

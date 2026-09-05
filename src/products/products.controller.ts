@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Put,
   Query,
@@ -16,6 +17,7 @@ import {
   AdminProductQueryDto,
   CreateProductDto,
   ProductQueryDto,
+  SetProductActiveDto,
   UpdateProductDto,
 } from './dto/product.dto';
 
@@ -75,6 +77,13 @@ export class ProductsController {
   @Put(':id')
   update(@Param('id') id: string, @Body() dto: UpdateProductDto) {
     return this.products.update(id, dto);
+  }
+
+  /** Storefront visibility toggle for the dashboard's product row (FEAT-020). */
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  @Patch(':id/active')
+  setActive(@Param('id') id: string, @Body() dto: SetProductActiveDto) {
+    return this.products.setActive(id, dto.isActive);
   }
 
   @Roles(Role.ADMIN, Role.SUPERADMIN)

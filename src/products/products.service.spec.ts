@@ -168,6 +168,36 @@ describe('ProductsService', () => {
     });
   });
 
+  describe('setActive (FEAT-020)', () => {
+    it('flips isActive and busts the storefront cache for that product', async () => {
+      const revalidate = jest.fn();
+      const svc = new ProductsService(
+        prisma as unknown as PrismaService,
+        {
+          revalidate,
+        } as unknown as import('../common/revalidate.service').RevalidateService,
+      );
+      prisma.product.findFirst.mockResolvedValue(makeProduct({ slug: 'atta' }));
+      prisma.product.update.mockResolvedValue(makeProduct({ isActive: false }));
+
+      await svc.setActive('p1', false);
+
+      expect(prisma.product.update).toHaveBeenCalledWith({
+        where: { id: 'p1' },
+        data: { isActive: false },
+      });
+      expect(revalidate).toHaveBeenCalledWith(['products', 'product:atta']);
+    });
+
+    it('404s an unknown or soft-deleted product', async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      await expect(service.setActive('nope', true)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('getForAdmin (BUG-002)', () => {
     it('resolves an inactive product by slug or id', async () => {
       const inactive = makeProduct({ isActive: false });
